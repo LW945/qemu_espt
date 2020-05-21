@@ -1422,7 +1422,7 @@ void my_load_helper_handler(int sig, siginfo_t *info, void *ucontext){
 	bool code_read = loadHelperPack.code_read;
 
 	struct GvaUpdatedList * elem = g_malloc(sizeof(struct GvaUpdatedList));
-	//qemu_log("In my_load_helper_handler, pid: %d, gva: %lx\n", pid, gva);
+	qemu_log("In my_load_helper_handler, pid: %d, gva: %lx\n", pid, gva);
 
 	uintptr_t mmu_idx = get_mmuidx(oi);
     uintptr_t index = tlb_index(env, mmu_idx, addr);
@@ -1467,7 +1467,7 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
             uintptr_t retaddr, MemOp op, bool code_read,
             FullLoadHelper *full_load)
 {
-	//qemu_log("In load_helper %x\n", addr);
+	qemu_log("In load_helper %lx\n", addr);
 	loadHelperPack.env = env;
 	loadHelperPack.addr = addr;
 	loadHelperPack.oi = oi;
@@ -1475,7 +1475,6 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
 	loadHelperPack.op = op;
 	loadHelperPack.code_read = code_read;
 	
-	//printf("In load_helper %lx\n", addr);
 	struct sigaction act = {0};
 	act.sa_sigaction = my_load_helper_handler;
 	act.sa_flags = SA_SIGINFO;
@@ -1499,7 +1498,8 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         cpu_unaligned_access(env_cpu(env), addr, access_type,
                              mmu_idx, retaddr);
     }
-
+	qemu_log("mask: %0lx\n", ~TARGET_PAGE_MASK);
+	qemu_log("before_tlb_addr: %0lx\n", tlb_addr);
     /* If the TLB entry is for a different page, reload and try again.  */
     if (!tlb_hit(tlb_addr, addr)) {
 		//printf("Tlb miss!");
@@ -1513,9 +1513,9 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         tlb_addr = code_read ? entry->addr_code : entry->addr_read;
         tlb_addr &= ~TLB_INVALID_MASK;
     }
-
     /* Handle anything that isn't just a straight memory access.  */
     if (unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
+		qemu_log("tlb_addr: %0lx\n", tlb_addr);
 		//printf("Not a simple memory access!");
         CPUIOTLBEntry *iotlbentry;
         bool need_swap;
@@ -1538,29 +1538,25 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
 
         /* Handle I/O access.  */
         if (likely(tlb_addr & TLB_MMIO)) {
-			//qemu_log("I/O Load gva: %x\n", addr);
+			//qemu_log("I/O Load gva: %lx\n", addr);
             return io_readx(env, iotlbentry, mmu_idx, addr, retaddr,
                             access_type, op ^ (need_swap * MO_BSWAP));
         }
 
-        haddr = (void *)((uintptr_t)addr + entry->addend);
+        //haddr = (void *)((uintptr_t)addr + entry->addend);
 
         /*
          * Keep these two load_memop separate to ensure that the compiler
          * is able to fold the entire function to a single instruction.
          * There is a build-time assert inside to remind you of this.  ;-)
          */
-		//qemu_log("Not Simple Load gva: %x\n", addr);
-		uint64_t tmp;
+		//qemu_log("Not Simple Load gva: %lx\n", addr);
         if (unlikely(need_swap)) {
-			tmp = load_memop(haddr, op ^ MO_BSWAP);
-			/*printf("Value: %I64u\n", tmp);
-			printf("Need Swap!\n");*/
-			return tmp;
+			return load_memop((void *)addr, op ^ MO_BSWAP);
+			//qemu_log("Need Swap!\n");
         }
-        tmp = load_memop(haddr, op);
-		//printf("Value: %I64u\n", tmp);
-		return tmp;
+        return load_memop((void *)addr, op);
+		//qemu_log("Need Swap!\n");
     }
 
     /* Handle slow unaligned access (it spans two pages or IO).  */
@@ -1587,10 +1583,7 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         }
         return res & MAKE_64BIT_MASK(0, size * 8);
     }
-    uint64_t tmp = load_memop((void *)addr, op);
-	//qemu_log("Load gva: %x\n", addr);
-	//qemu_log("Value: %I64u\n", tmp);	
-	return tmp;
+	return load_memop((void *)addr, op);
 }
 
 /*
@@ -1805,7 +1798,7 @@ static inline void QEMU_ALWAYS_INLINE
 store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
              TCGMemOpIdx oi, uintptr_t retaddr, MemOp op)
 {
-	
+	qemu_log("In store_helper %lx\n", addr);
 	storeHelperPack.env = env;
 	storeHelperPack.addr = addr;
 	storeHelperPack.oi = oi;
@@ -1832,6 +1825,7 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
                              mmu_idx, retaddr);
     }
 
+	//qemu_log("tlb_addr before: %0lx\n", tlb_addr);
     /* If the TLB entry is for a different page, reload and try again.  */
     if (!tlb_hit(tlb_addr, addr)) {
         if (!victim_tlb_hit(env, mmu_idx, index, tlb_off,
@@ -1883,19 +1877,20 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
             notdirty_write(env_cpu(env), addr, size, iotlbentry, retaddr);
         }
 
-        haddr = (void *)((uintptr_t)addr + entry->addend);
+        //haddr = (void *)((uintptr_t)addr + entry->addend);
 
         /*
          * Keep these two store_memop separate to ensure that the compiler
          * is able to fold the entire function to a single instruction.
          * There is a build-time assert inside to remind you of this.  ;-)
          */
-		//qemu_log("Not Simple Store gva: %x\n", addr);
+		//qemu_log("Not Simple Store gva: %lx\n", addr);
         if (unlikely(need_swap)) {
-			//printf("Need Swap!\n");
-            store_memop(haddr, val, op ^ MO_BSWAP);
+			//qemu_log("Need Swap!\n");
+            store_memop((void *)addr, val, op ^ MO_BSWAP);
         } else {
-            store_memop(haddr, val, op);
+			//qemu_log("Need Swap!\n");
+            store_memop((void *)addr, val, op);
         }
         return;
     }
