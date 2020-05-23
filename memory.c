@@ -55,6 +55,9 @@ bool is_gva_updated[(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
 GvaUpdatedListHead gva_updated_list
 	= QLIST_HEAD_INITIALIZER(gva_updated_list);
 int len_gva_list;
+
+uint8_t tlb_addr_cache[NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
+CPUIOTLBEntry io_tlb_cache[NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
 typedef struct AddrRange AddrRange;
 
 /*
@@ -740,6 +743,7 @@ static FlatView *generate_memory_topology(MemoryRegion *mr)
             section_from_flat_range(&view->ranges[i], view);
         flatview_add_to_dispatch(view, &mrs);
     }
+	//Used for maintaining espt
 	if(unlikely(len_gva_list)){
 		index = 0;
 		tmp = g_malloc(len_gva_list * sizeof(unsigned long));
@@ -752,6 +756,9 @@ static FlatView *generate_memory_topology(MemoryRegion *mr)
 		g_free(tmp);
 		memset(is_gva_updated, 0, sizeof(is_gva_updated));
 		len_gva_list = 0;
+
+		memset(tlb_addr_cache, 0, sizeof(tlb_addr_cache));
+		memset(io_tlb_cache, 0, sizeof(io_tlb_cache));
 	}
 	
     address_space_dispatch_compact(view->dispatch);
