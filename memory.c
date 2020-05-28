@@ -56,7 +56,7 @@ GvaUpdatedListHead gva_updated_list
 	= QLIST_HEAD_INITIALIZER(gva_updated_list);
 int len_gva_list;
 
-uint8_t tlb_addr_cache[NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
+uint8_t tlb_addr_cache[NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1][3];
 CPUIOTLBEntry io_tlb_cache[NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
 typedef struct AddrRange AddrRange;
 
@@ -727,7 +727,6 @@ static FlatView *generate_memory_topology(MemoryRegion *mr)
     FlatView *view;
 	struct GvaUpdatedList *var;
 	unsigned long * tmp;
-
     view = flatview_new(mr);
 
     if (mr) {
