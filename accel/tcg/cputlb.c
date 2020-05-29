@@ -1422,7 +1422,7 @@ void my_load_helper_handler(int sig, siginfo_t *info, void *ucontext){
 	bool code_read = loadHelperPack.code_read;
 
 	struct GvaUpdatedList * elem = g_malloc(sizeof(struct GvaUpdatedList));
-	qemu_log("In my_load_helper_handler, pid: %d, gva: %lx\n", pid, gva);
+	//qemu_log("In my_load_helper_handler, pid: %d, gva: %lx\n", pid, gva);
 
 	uintptr_t mmu_idx = get_mmuidx(oi);
     uintptr_t index = tlb_index(env, mmu_idx, addr);
@@ -1498,8 +1498,6 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         cpu_unaligned_access(env_cpu(env), addr, access_type,
                              mmu_idx, retaddr);
     }
-	qemu_log("mask: %0lx\n", ~TARGET_PAGE_MASK);
-	qemu_log("before_tlb_addr: %0lx\n", tlb_addr);
     /* If the TLB entry is for a different page, reload and try again.  */
     if (!tlb_hit(tlb_addr, addr)) {
 		//printf("Tlb miss!");
@@ -1515,7 +1513,7 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
     }
     /* Handle anything that isn't just a straight memory access.  */
     if (unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
-		qemu_log("tlb_addr: %0lx\n", tlb_addr);
+		qemu_log("tlb_addr: %x\n", tlb_addr & 0xFFF);
 		//printf("Not a simple memory access!");
         CPUIOTLBEntry *iotlbentry;
         bool need_swap;
@@ -1538,7 +1536,7 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
 
         /* Handle I/O access.  */
         if (likely(tlb_addr & TLB_MMIO)) {
-			//qemu_log("I/O Load gva: %lx\n", addr);
+			qemu_log("I/O Load gva: %lx\n", addr);
             return io_readx(env, iotlbentry, mmu_idx, addr, retaddr,
                             access_type, op ^ (need_swap * MO_BSWAP));
         }
@@ -1840,6 +1838,7 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
 
     /* Handle anything that isn't just a straight memory access.  */
     if (unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
+		qemu_log("tlb_addr: %x\n", tlb_addr & 0xFFF);
         CPUIOTLBEntry *iotlbentry;
         bool need_swap;
 
@@ -1861,7 +1860,7 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
 
         /* Handle I/O access.  */
         if (tlb_addr & TLB_MMIO) {
-			//qemu_log("I/O Store gva: %x\n", addr);
+			qemu_log("I/O Store gva: %x\n", addr);
             io_writex(env, iotlbentry, mmu_idx, val, addr, retaddr,
                       op ^ (need_swap * MO_BSWAP));
             return;
