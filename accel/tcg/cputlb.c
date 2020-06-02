@@ -1499,7 +1499,8 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
                              mmu_idx, retaddr);
     }
     /* If the TLB entry is for a different page, reload and try again.  */
-    if (!tlb_hit(tlb_addr, addr)) {
+	qemu_log("mmu_idex: %d, tlb_index: %x, tlb_addr :%x\n", mmu_idx, index, tlb_addr);    
+	if (!tlb_hit(tlb_addr, addr)) {
 		//printf("Tlb miss!");
         if (!victim_tlb_hit(env, mmu_idx, index, tlb_off,
                             addr & TARGET_PAGE_MASK)) {
@@ -1508,6 +1509,7 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
             index = tlb_index(env, mmu_idx, addr);
             entry = tlb_entry(env, mmu_idx, addr);
         }
+		qemu_log("tlb_miss\n");
         tlb_addr = code_read ? entry->addr_code : entry->addr_read;
         tlb_addr &= ~TLB_INVALID_MASK;
     }
