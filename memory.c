@@ -57,6 +57,7 @@ GvaUpdatedListHead gva_updated_list
 int len_gva_list;
 
 uint8_t tlb_addr_cache[NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1][3];
+bool is_tlb_addr_cache[NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1][3];
 CPUIOTLBEntry io_tlb_cache[NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
 typedef struct AddrRange AddrRange;
 
@@ -757,6 +758,7 @@ static FlatView *generate_memory_topology(MemoryRegion *mr)
 		len_gva_list = 0;
 
 		memset(tlb_addr_cache, 0, sizeof(tlb_addr_cache));
+		memset(is_tlb_addr_cache, 0, sizeof(is_tlb_addr_cache));
 		memset(io_tlb_cache, 0, sizeof(io_tlb_cache));
 	}
 	
