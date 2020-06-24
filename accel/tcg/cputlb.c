@@ -83,12 +83,13 @@ QEMU_BUILD_BUG_ON(NB_MMU_MODES > 16);
 
 static struct MyElemPack loadHelperPack, storeHelperPack;
 extern GvaUpdatedListHead gva_updated_list;
-extern bool is_gva_updated[(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
+extern bool is_gva_updated[2][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
 extern int len_gva_list;
 
-extern uint8_t tlb_addr_cache[NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1][3];
-extern bool is_tlb_addr_cache[NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1][3];
-extern CPUIOTLBEntry io_tlb_cache[NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
+extern uint8_t tlb_addr_cache[2][NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1][3];
+extern bool is_tlb_addr_cache[2][NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1][3];
+extern CPUIOTLBEntry io_tlb_cache[2][NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
+
 static inline size_t sizeof_tlb(CPUArchState *env, uintptr_t mmu_idx)
 {
     return env_tlb(env)->f[mmu_idx].mask + (1 << CPU_TLB_ENTRY_BITS);
@@ -745,11 +746,11 @@ void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
     section = address_space_translate_for_iotlb(cpu, asidx, paddr_page,
                                                 &xlat, &sz, attrs, &prot);
     assert(sz >= TARGET_PAGE_SIZE);
-
+	
     /*tlb_debug("vaddr=" TARGET_FMT_lx " paddr=0x" TARGET_FMT_plx
               " prot=%x idx=%d\n",
               vaddr, paddr, prot, mmu_idx);*/
-
+	qemu_log("vaddr_page: %0lx, section name: %s\n", vaddr_page, section->mr->name);
     address = vaddr_page;
     if (size < TARGET_PAGE_SIZE) {
         /* Repeat the MMU check and TLB fill on every access.  */
@@ -797,6 +798,7 @@ void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
          * Reads to romd devices go through the ram_ptr found above,
          * but of course reads to I/O must go through MMIO.
          */
+		qemu_log("I/O!\n");
         write_address |= TLB_MMIO;
 		write_address_tlb |= MY_TLB_MMIO;
         if (!is_romd) {
@@ -855,28 +857,28 @@ void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
      */
     desc->iotlb[index].addr = iotlb - vaddr_page;
     desc->iotlb[index].attrs = attrs;
-	io_tlb_cache[mmu_idx][target_vaddr].addr = iotlb - vaddr_page;;
-	io_tlb_cache[mmu_idx][target_vaddr].attrs = attrs;
+	io_tlb_cache[asidx][mmu_idx][target_vaddr].addr = iotlb - vaddr_page;;
+	io_tlb_cache[asidx][mmu_idx][target_vaddr].attrs = attrs;
 	
 
     /* Now calculate the new entry */
     tn.addend = addend - vaddr_page;
     if (prot & PAGE_READ) {
         tn.addr_read = address;
-		tlb_addr_cache[mmu_idx][target_vaddr][0] = address_tlb;
+		tlb_addr_cache[asidx][mmu_idx][target_vaddr][0] = address_tlb;
         if (wp_flags & BP_MEM_READ) {
             tn.addr_read |= TLB_WATCHPOINT;
-			tlb_addr_cache[mmu_idx][target_vaddr][0] |= MY_TLB_WATCHPOINT;
+			tlb_addr_cache[asidx][mmu_idx][target_vaddr][0] |= MY_TLB_WATCHPOINT;
         }
-		is_tlb_addr_cache[mmu_idx][target_vaddr][0] = 1;
+		is_tlb_addr_cache[asidx][mmu_idx][target_vaddr][0] = 1;
     } else {
         tn.addr_read = -1;
     }
 
     if (prot & PAGE_EXEC) {
         tn.addr_code = address;
-		tlb_addr_cache[mmu_idx][target_vaddr][2] = address_tlb;
-		is_tlb_addr_cache[mmu_idx][target_vaddr][2] = 1;
+		tlb_addr_cache[asidx][mmu_idx][target_vaddr][2] = address_tlb;
+		is_tlb_addr_cache[asidx][mmu_idx][target_vaddr][2] = 1;
     } else {
         tn.addr_code = -1;
     }
@@ -884,16 +886,16 @@ void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
     tn.addr_write = -1;
     if (prot & PAGE_WRITE) {
         tn.addr_write = write_address;
-		tlb_addr_cache[mmu_idx][target_vaddr][1] = write_address_tlb;
+		tlb_addr_cache[asidx][mmu_idx][target_vaddr][1] = write_address_tlb;
         if (prot & PAGE_WRITE_INV) {
             tn.addr_write |= TLB_INVALID_MASK;
-			tlb_addr_cache[mmu_idx][target_vaddr][1] |= MY_TLB_INVALID_MASK;
+			tlb_addr_cache[asidx][mmu_idx][target_vaddr][1] |= MY_TLB_INVALID_MASK;
         }
         if (wp_flags & BP_MEM_WRITE) {
             tn.addr_write |= TLB_WATCHPOINT;
-			tlb_addr_cache[mmu_idx][target_vaddr][1] |= MY_TLB_WATCHPOINT;
+			tlb_addr_cache[asidx][mmu_idx][target_vaddr][1] |= MY_TLB_WATCHPOINT;
         }
-		is_tlb_addr_cache[mmu_idx][target_vaddr][1] = 1;
+		is_tlb_addr_cache[asidx][mmu_idx][target_vaddr][1] = 1;
     }
 
     copy_tlb_helper_locked(te, &tn);
@@ -1433,29 +1435,44 @@ void my_load_helper_handler(int sig, siginfo_t *info, void *ucontext){
     struct nlmsghdr nlh_rev;
     struct sockaddr_nl saddr, daddr;
 	struct MyNetlinkPack msg = {1, pid, MSG_LEN, 0, 0, NULL};
-	unsigned long gva = (unsigned long)info->si_addr;
 	unsigned long hva;
 
 	CPUArchState *env = loadHelperPack.env;
 	target_ulong addr = loadHelperPack.addr;
 	TCGMemOpIdx oi = loadHelperPack.oi;
+	bool code_read = loadHelperPack.code_read;
+	uintptr_t retaddr = loadHelperPack.retaddr;
+	MemOp op = loadHelperPack.op;
 
 	struct GvaUpdatedList * elem = g_malloc(sizeof(struct GvaUpdatedList));
-	qemu_log("In my_load_helper_handler, pid: %d, gva: %lx\n", pid, gva);
+	qemu_log("In my_load_helper_handler, pid: %d, gva: %lx\n", pid, addr);
 
+	int asidx = cpu_asidx_from_attrs(env_cpu(env), cpu_get_mem_attrs(env));
 	uintptr_t mmu_idx = get_mmuidx(oi);
-    uintptr_t index = tlb_index(env, mmu_idx, addr);
     CPUTLBEntry *entry = tlb_entry(env, mmu_idx, addr);
-	
-	if(!is_gva_updated[gva >> TARGET_PAGE_BITS]){
+    target_ulong tlb_addr = code_read ? entry->addr_code : entry->addr_read;
+    const MMUAccessType access_type =
+        code_read ? MMU_INST_FETCH : MMU_DATA_LOAD;
+	size_t size = memop_size(op);
+
+	if(!is_gva_updated[asidx][addr >> TARGET_PAGE_BITS]){
 		//qemu_log("len: %d, addr: %lx\n", len_gva_list, gva);
-		elem->addr = gva;
+		elem->addr = addr;
 		QLIST_INSERT_HEAD(&gva_updated_list, elem, entry);
-		is_gva_updated[gva >> TARGET_PAGE_BITS] = 1;
+		is_gva_updated[asidx][addr >> TARGET_PAGE_BITS] = 1;
 		len_gva_list ++;
 	}
+
+	if(!tlb_hit(tlb_addr, addr)){
+		//qemu_log("helper_tlb_miss!\n");
+		tlb_fill(env_cpu(env), addr, size,
+		     access_type, mmu_idx, retaddr);
+		entry = tlb_entry(env, mmu_idx, addr);
+	}
+	//qemu_log("tlb_addr: %0lx, addr: %0lx, addend: %0lx\n", tlb_addr, addr, entry->addend);
+
 	hva = ((uintptr_t)addr + entry->addend);
-	msg.gva = gva, msg.hva = hva;
+	msg.gva = addr, msg.hva = hva;
 	//printf("hva value :%d, hav addr :0x%lx\n", *(char *)hva, hva);
 	netlink_init(&skfd, &saddr, &daddr);
 	netlink_send(skfd, saddr, daddr, msg);	
@@ -1472,22 +1489,26 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
 	loadHelperPack.env = env;
 	loadHelperPack.addr = addr;
 	loadHelperPack.oi = oi;
-	loadHelperPack.retaddr =retaddr;
+	loadHelperPack.retaddr = retaddr;
 	loadHelperPack.op = op;
 	loadHelperPack.code_read = code_read;
-	
+
 	struct sigaction act = {0};
 	act.sa_sigaction = my_load_helper_handler;
 	act.sa_flags = SA_SIGINFO;
 	sigaction(SIGSEGV, &act, NULL);
 
+	int asidx = cpu_asidx_from_attrs(env_cpu(env), cpu_get_mem_attrs(env));
 	target_ulong target_addr = addr >> TARGET_PAGE_BITS;
    	uintptr_t mmu_idx = get_mmuidx(oi);
+
+    uint8_t tlb_addr = code_read ? tlb_addr_cache[asidx][mmu_idx][target_addr][2]: tlb_addr_cache[asidx][mmu_idx][target_addr][0];
+	bool judge_tlb_addr = code_read ? is_tlb_addr_cache[asidx][mmu_idx][target_addr][2] : is_tlb_addr_cache[asidx][mmu_idx][target_addr][0];
+
     uintptr_t index = tlb_index(env, mmu_idx, addr);
     CPUTLBEntry *entry = tlb_entry(env, mmu_idx, addr);
-    uint8_t tlb_addr = code_read ? tlb_addr_cache[mmu_idx][target_addr][2]: tlb_addr_cache[mmu_idx][target_addr][0];
-	bool judge_tlb_addr = code_read ? is_tlb_addr_cache[mmu_idx][target_addr][2] : is_tlb_addr_cache[mmu_idx][target_addr][0];
 	target_ulong tlb_addr_n = code_read ? entry->addr_code : entry->addr_read;
+
     const size_t tlb_off = code_read ?
         offsetof(CPUTLBEntry, addr_code) : offsetof(CPUTLBEntry, addr_read);
     const MMUAccessType access_type =
@@ -1503,26 +1524,28 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
     }
     /* If the TLB entry is for a different page, reload and try again.  */
 
-	if(!judge_tlb_addr || !tlb_hit(tlb_addr_n, addr)){
+	if(!judge_tlb_addr){
+		//qemu_log("judge_tlb_addr!\n");
 		tlb_fill(env_cpu(env), addr, size,
                  access_type, mmu_idx, retaddr);
-        index = tlb_index(env, mmu_idx, addr);
-        entry = tlb_entry(env, mmu_idx, addr);
-	    tlb_addr_n = code_read ? entry->addr_code : entry->addr_read;
-        tlb_addr_n &= ~TLB_INVALID_MASK;
-		tlb_addr = code_read ? tlb_addr_cache[mmu_idx][target_addr][2]: tlb_addr_cache[mmu_idx][target_addr][0];
-	}	
-	if(tlb_addr_n & ~TARGET_PAGE_MASK){
-		qemu_log("#\n");
-		qemu_log("tlb_addr: %0lx\n", tlb_addr);
-		qemu_log("tlb_addr_n: %0lx\n", tlb_addr_n & ~TARGET_PAGE_MASK);
+		tlb_addr = code_read ? tlb_addr_cache[asidx][mmu_idx][target_addr][2]: tlb_addr_cache[asidx][mmu_idx][target_addr][0];
+		tlb_addr &= ~MY_TLB_INVALID_MASK;
+		//tlb_addr_n = code_read ? entry->addr_code : entry->addr_read;
+        //tlb_addr_n &= ~TLB_INVALID_MASK;
 	}
+
+	/*if(!tlb_hit(tlb_addr_n, addr)){
+		qemu_log("tlb_miss!\n");
+		tlb_fill(env_cpu(env), addr, size,
+		         access_type, mmu_idx, retaddr);
+		entry = tlb_entry(env, mmu_idx, addr);
+		tlb_addr_n = code_read ? entry->addr_code : entry->addr_read;
+	}*/
+	
     /* Handle anything that isn't just a straight memory access.  */
     if (unlikely(tlb_addr)) {
-		qemu_log("tlb_addr: %0lx\n", tlb_addr);
-		qemu_log("tlb_addr_n: %0lx\n", tlb_addr_n & ~TARGET_PAGE_MASK);
-		//printf("Not a simple memory access!");
-        CPUIOTLBEntry *iotlbentry, *iotlbentry1;
+		//qemu_log("Not a simple memory access!");
+        CPUIOTLBEntry *iotlbentry;
         bool need_swap;
 
         /* For anything that is unaligned, recurse through full_load.  */
@@ -1530,17 +1553,13 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
             goto do_unaligned_access;
         }
 
-        iotlbentry1 = &io_tlb_cache[mmu_idx][target_addr];
-		iotlbentry = &env_tlb(env)->d[mmu_idx].iotlb[index];
-
-		qemu_log("io_1: %0lx\n", iotlbentry1->addr);
-		qemu_log("io_0: %0lx\n", iotlbentry->addr);
+		iotlbentry = &io_tlb_cache[asidx][mmu_idx][target_addr];
 
         /* Handle watchpoints.  */
         if (unlikely(tlb_addr & MY_TLB_WATCHPOINT)) {
             /* On watchpoint hit, this will longjmp out.  */
             cpu_check_watchpoint(env_cpu(env), addr, size,
-                                 iotlbentry1->attrs, BP_MEM_READ, retaddr);
+                                 iotlbentry->attrs, BP_MEM_READ, retaddr);
         }
 
         need_swap = size > 1 && (tlb_addr & MY_TLB_BSWAP);
@@ -1548,7 +1567,7 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         /* Handle I/O access.  */
         if (likely(tlb_addr & MY_TLB_MMIO)) {
 			//qemu_log("I/O Load gva: %lx\n", addr);
-            return io_readx(env, iotlbentry1, mmu_idx, addr, retaddr,
+            return io_readx(env, iotlbentry, mmu_idx, addr, retaddr,
                             access_type, op ^ (need_swap * MO_BSWAP));
         }
 
@@ -1572,7 +1591,7 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
     if (size > 1
         && unlikely((addr & ~TARGET_PAGE_MASK) + size - 1
                     >= TARGET_PAGE_SIZE)) {
-		//printf("Double page!");
+
         target_ulong addr1, addr2;
         uint64_t r1, r2;
         unsigned shift;
@@ -1758,33 +1777,42 @@ void my_store_helper_handler(int sig, siginfo_t *info, void *ucontext) {
     struct nlmsghdr nlh_rev;
     struct sockaddr_nl saddr, daddr;
 	struct MyNetlinkPack msg = {1, pid, MSG_LEN, 0, 0, NULL};
-	unsigned long gva = (unsigned long)info->si_addr;
 	unsigned long hva;
 	struct GvaUpdatedList * elem = g_malloc(sizeof(struct GvaUpdatedList));
 
 	CPUArchState *env = storeHelperPack.env;
 	target_ulong addr = storeHelperPack.addr;
 	TCGMemOpIdx oi = storeHelperPack.oi;
+	uintptr_t retaddr = storeHelperPack.retaddr;
+	MemOp op = storeHelperPack.op;
 
-	//qemu_log("In my_store_helper_handler, pid: %d, gva: %lx\n", pid, gva);
+	qemu_log("In my_store_helper_handler, pid: %d, gva: %lx\n", pid, addr);
 
+	int asidx = cpu_asidx_from_attrs(env_cpu(env), cpu_get_mem_attrs(env));
     uintptr_t mmu_idx = get_mmuidx(oi);
-    uintptr_t index = tlb_index(env, mmu_idx, addr);
     CPUTLBEntry *entry = tlb_entry(env, mmu_idx, addr);
-	
-	if(!is_gva_updated[gva >> TARGET_PAGE_BITS]){
-		elem->addr = gva;
+	target_ulong tlb_addr = tlb_addr_write(entry);
+	size_t size = memop_size(op);
+
+	if(!is_gva_updated[asidx][addr >> TARGET_PAGE_BITS]){
+		elem->addr = addr;
 		QLIST_INSERT_HEAD(&gva_updated_list, elem, entry);
-		is_gva_updated[gva >> TARGET_PAGE_BITS] = 1;
+		is_gva_updated[asidx][addr >> TARGET_PAGE_BITS] = 1;
 		len_gva_list ++;
 	}
 
+	tlb_fill(env_cpu(env), addr, size, MMU_DATA_STORE,
+	         mmu_idx, retaddr);
+	entry = tlb_entry(env, mmu_idx, addr);
 	hva = ((uintptr_t)addr + entry->addend);
-	msg.gva = gva, msg.hva = hva;
+
+	//qemu_log("entry1 addend: %0lx\n", hva);
+
+	msg.gva = addr, msg.hva = hva;
 	netlink_init(&skfd, &saddr, &daddr);
 	netlink_send(skfd, saddr, daddr, msg);	
 	netlink_recv(skfd, daddr, &nlh_rev);
-	//printf("After hva value :%d, hav addr :0x%lx\n", *(char *)hva, hva);
+	//qemu_log("hav addr :0x%lx\n", hva);
 }
 
 static inline void QEMU_ALWAYS_INLINE
@@ -1795,7 +1823,7 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
 	storeHelperPack.env = env;
 	storeHelperPack.addr = addr;
 	storeHelperPack.oi = oi;
-	storeHelperPack.retaddr =retaddr;
+	storeHelperPack.retaddr = retaddr;
 	storeHelperPack.op = op;
 	
 	struct sigaction act = {0};
@@ -1803,15 +1831,19 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
 	act.sa_flags = SA_SIGINFO;
 	sigaction(SIGSEGV, &act, NULL);
 
+	int asidx = cpu_asidx_from_attrs(env_cpu(env), cpu_get_mem_attrs(env));
 	target_ulong target_addr = addr >> TARGET_PAGE_BITS;
+
     uintptr_t mmu_idx = get_mmuidx(oi);
     uintptr_t index = tlb_index(env, mmu_idx, addr);
     CPUTLBEntry *entry = tlb_entry(env, mmu_idx, addr);
-    uint8_t tlb_addr = tlb_addr_cache[mmu_idx][target_addr][1];
+
+    uint8_t tlb_addr = tlb_addr_cache[asidx][mmu_idx][target_addr][1];
 	target_ulong tlb_addr_n = tlb_addr_write(entry);
+	bool judge_tlb_addr = is_tlb_addr_cache[asidx][mmu_idx][target_addr][1];
+
     const size_t tlb_off = offsetof(CPUTLBEntry, addr_write);
     unsigned a_bits = get_alignment_bits(get_memop(oi));
-    void *haddr;
     size_t size = memop_size(op);
 
     /* Handle CPU specific unaligned behaviour */
@@ -1822,42 +1854,47 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
 
 	//qemu_log("tlb_addr before: %0lx\n", tlb_addr);
     /* If the TLB entry is for a different page, reload and try again.  */
-	if(!is_tlb_addr_cache[mmu_idx][target_addr][1] || !tlb_hit(tlb_addr_n, addr)){
+	if(!judge_tlb_addr){
         tlb_fill(env_cpu(env), addr, size, MMU_DATA_STORE,
                  mmu_idx, retaddr);
-        index = tlb_index(env, mmu_idx, addr);
-        entry = tlb_entry(env, mmu_idx, addr);
-		tlb_addr_n = tlb_addr_write(entry) & ~TLB_INVALID_MASK;
-		tlb_addr = tlb_addr_cache[mmu_idx][target_addr][1];
+		tlb_addr = tlb_addr_cache[asidx][mmu_idx][target_addr][1];
+		tlb_addr &= ~TLB_INVALID_MASK;
 	}
-	if(tlb_addr_n & ~TARGET_PAGE_MASK){
-		qemu_log("#: %u, %u, %d\n", addr >> TARGET_PAGE_SIZE, addr, TARGET_PAGE_SIZE);
-		qemu_log("tlb_addr: %0lx\n", tlb_addr);
-		qemu_log("tlb_addr_n: %0lx\n", tlb_addr_n & ~TARGET_PAGE_MASK);
-	}
+
+	/*if(!tlb_hit(tlb_addr_n, addr)){
+		qemu_log("tlb_miss!\n");
+		tlb_fill(env_cpu(env), addr, size, MMU_DATA_STORE,
+		         mmu_idx, retaddr);
+		if(tlb_addr != tlb_addr_cache[asidx][mmu_idx][target_addr][1]){
+			qemu_log("wrong!\n");
+			//qemu_log("Before tlb addr: %d, After tlb addr: %d\n", tlb_addr, tlb_addr_cache[mmu_idx][target_addr][1]);
+		}
+		//tlb_addr = tlb_addr_cache[asidx][mmu_idx][target_addr][1];
+		entry = tlb_entry(env, mmu_idx, addr);
+		tlb_addr_n = tlb_addr_write(entry);
+		tlb_addr_n &= ~TLB_INVALID_MASK;
+	}*/
+
+
+	//qemu_log("addr hva: %0lx, addr: %0lx, added: %0lx\n", (uintptr_t)addr + entry->addend, addr , entry->addend);
+	//qemu_log("tlb addr: %d, mmu_idx: %d\n", tlb_addr, mmu_idx);
     /* Handle anything that isn't just a straight memory access.  */
     if (unlikely(tlb_addr)) {
-		qemu_log("tlb_addr: %0lx\n", tlb_addr);
-		qemu_log("tlb_addr_n: %0lx\n", tlb_addr_n & ~TARGET_PAGE_MASK);
-        CPUIOTLBEntry *iotlbentry, *iotlbentry1;
+        CPUIOTLBEntry *iotlbentry;
         bool need_swap;
-
+		//qemu_log("Not simple access in store!\n");
         /* For anything that is unaligned, recurse through byte stores.  */
         if ((addr & (size - 1)) != 0) {
             goto do_unaligned_access;
         }
 
-        iotlbentry1 = &io_tlb_cache[mmu_idx][target_addr];
-		iotlbentry = &env_tlb(env)->d[mmu_idx].iotlb[index];
-
-		qemu_log("io_1: %0lx\n", iotlbentry1->addr);
-		qemu_log("io_0: %0lx\n", iotlbentry->addr);
+		iotlbentry = &io_tlb_cache[asidx][mmu_idx][target_addr];
 
         /* Handle watchpoints.  */
         if (unlikely(tlb_addr & MY_TLB_WATCHPOINT)) {
             /* On watchpoint hit, this will longjmp out.  */
             cpu_check_watchpoint(env_cpu(env), addr, size,
-                                 iotlbentry1->attrs, BP_MEM_WRITE, retaddr);
+                                 iotlbentry->attrs, BP_MEM_WRITE, retaddr);
         }
 
         need_swap = size > 1 && (tlb_addr & TLB_BSWAP);
@@ -1865,12 +1902,10 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
         /* Handle I/O access.  */
         if (tlb_addr & MY_TLB_MMIO) {
 			//qemu_log("I/O Store gva: %x\n", addr);
-            io_writex(env, iotlbentry1, mmu_idx, val, addr, retaddr,
+            io_writex(env, iotlbentry, mmu_idx, val, addr, retaddr,
                       op ^ (need_swap * MO_BSWAP));
             return;
         }
-
-		qemu_log("NOTdiryt: %d\n!", TLB_NOTDIRTY);
 
         /* Ignore writes to ROM.  */
         if (unlikely(tlb_addr & MY_TLB_DISCARD_WRITE)) {
@@ -1878,9 +1913,8 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
         }
 		
         /* Handle clean RAM pages.  */
-        if (tlb_addr_n & TLB_NOTDIRTY) {
-			qemu_log("Not Ditry!\n");
-            notdirty_write(env_cpu(env), addr, size, iotlbentry1, retaddr);
+        if (tlb_addr & MY_TLB_NOTDIRTY) {
+            notdirty_write(env_cpu(env), addr, size, iotlbentry, retaddr);
         }
 
         //haddr = (void *)((uintptr_t)addr + entry->addend);
@@ -1936,12 +1970,12 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
          * Handle watchpoints.  Since this may trap, all checks
          * must happen before any store.
          */
-        if (unlikely(tlb_addr & TLB_WATCHPOINT)) {
+        if (unlikely(tlb_addr & MY_TLB_WATCHPOINT)) {
             cpu_check_watchpoint(env_cpu(env), addr, size - size2,
                                  env_tlb(env)->d[mmu_idx].iotlb[index].attrs,
                                  BP_MEM_WRITE, retaddr);
         }
-        if (unlikely(tlb_addr2 & TLB_WATCHPOINT)) {
+        if (unlikely(tlb_addr2 & MY_TLB_WATCHPOINT)) {
             cpu_check_watchpoint(env_cpu(env), page2, size2,
                                  env_tlb(env)->d[mmu_idx].iotlb[index2].attrs,
                                  BP_MEM_WRITE, retaddr);
@@ -1965,10 +1999,7 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
         }
         return;
     }
-	//qemu_log("Store gva: %x\n", addr);
-	//qemu_log("Value: %I64u\n", val);
 	store_memop((void *)addr, val, op);
-    
 }
 
 void helper_ret_stb_mmu(CPUArchState *env, target_ulong addr, uint8_t val,
