@@ -46,12 +46,8 @@ struct GvaUpdatedList{
 
 struct MyElemPack{
 	CPUTLBEntry *entry;
-	CPUArchState *env;
 	target_ulong addr;
-	TCGMemOpIdx oi;
-	uintptr_t retaddr;
-	MemOp op;
-	bool code_read;
+	int asidx;
 };
 
 struct MyNetlinkPack{
