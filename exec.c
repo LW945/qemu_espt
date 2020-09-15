@@ -695,7 +695,6 @@ address_space_translate_for_iotlb(CPUState *cpu, int asidx, hwaddr addr,
     IOMMUTLBEntry iotlb;
     int iommu_idx;
     AddressSpaceDispatch *d = atomic_rcu_read(&cpu->cpu_ases[asidx].memory_dispatch);
-	qemu_log("AddressSpaceDispatch: %0lx, asidx: %0d\n", d, asidx);
     for (;;) {
         section = address_space_translate_internal(d, addr, &addr, plen, false);
 

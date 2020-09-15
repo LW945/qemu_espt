@@ -759,9 +759,7 @@ static FlatView *generate_memory_topology(MemoryRegion *mr)
 		memset(is_gva_updated, 0, sizeof(is_gva_updated));
 		len_gva_list = 0;
 
-		memset(tlb_addr_cache, 0, sizeof(tlb_addr_cache));
 		memset(is_tlb_addr_cache, 0, sizeof(is_tlb_addr_cache));
-		memset(io_tlb_cache, 0, sizeof(io_tlb_cache));
 	}
 	
     address_space_dispatch_compact(view->dispatch);

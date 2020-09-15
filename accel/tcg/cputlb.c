@@ -236,7 +236,6 @@ static void tlb_mmu_resize_locked(CPUArchState *env, int mmu_idx)
 
 static inline void tlb_table_flush_by_mmuidx(CPUArchState *env, int mmu_idx)
 {
-	qemu_log("tlb_flush!!!\n");
 
     tlb_mmu_resize_locked(env, mmu_idx);
     memset(env_tlb(env)->f[mmu_idx].table, -1, sizeof_tlb(env, mmu_idx));
@@ -246,15 +245,10 @@ static inline void tlb_table_flush_by_mmuidx(CPUArchState *env, int mmu_idx)
 	struct GvaUpdatedList *var;
 	unsigned long * tmp;
 
-	memset(tlb_addr_cache[0], 0, sizeof(tlb_addr_cache[0]));
-	memset(tlb_addr_cache[1], 0, sizeof(tlb_addr_cache[1]));
-	memset(is_tlb_addr_cache[0], 0, sizeof(is_tlb_addr_cache[0]));
-	memset(is_tlb_addr_cache[1], 0, sizeof(is_tlb_addr_cache[1]));
-	memset(io_tlb_cache[0], 0, sizeof(io_tlb_cache[0]));
-	memset(io_tlb_cache[1], 0, sizeof(io_tlb_cache[1]));
+	memset(is_tlb_addr_cache[0][mmu_idx], 0, sizeof(is_tlb_addr_cache[0][mmu_idx]));
+	memset(is_tlb_addr_cache[1][mmu_idx], 0, sizeof(is_tlb_addr_cache[1][mmu_idx]));
 
 	if(unlikely(len_gva_list)){
-		qemu_log("clean!\n");
 		index = 0;
 		tmp = g_malloc(len_gva_list * sizeof(unsigned long));
 		QLIST_FOREACH(var, &gva_updated_list, entry){
@@ -484,6 +478,27 @@ static void tlb_flush_page_locked(CPUArchState *env, int midx,
             tlb_n_used_entries_dec(env, midx);
         }
         tlb_flush_vtlb_page_locked(env, midx, page);
+
+		int index;
+		struct GvaUpdatedList *var;
+		unsigned long * tmp;
+
+		memset(is_tlb_addr_cache[0][midx][page], 0, sizeof(is_tlb_addr_cache[0][midx][page]));
+		memset(is_tlb_addr_cache[1][midx][page], 0, sizeof(is_tlb_addr_cache[1][midx][page]));
+
+		if(unlikely(len_gva_list)){
+			index = 0;
+			tmp = g_malloc(len_gva_list * sizeof(unsigned long));
+			QLIST_FOREACH(var, &gva_updated_list, entry){
+				tmp[index++] = var-> addr;
+				QLIST_REMOVE(var, entry);
+				g_free(var);
+			}
+			my_espt_update(tmp);
+			g_free(tmp);
+			memset(is_gva_updated, 0, sizeof(is_gva_updated));
+			len_gva_list = 0;
+		}
     }
 }
 
@@ -512,34 +527,6 @@ static void tlb_flush_page_by_mmuidx_async_work(CPUState *cpu,
             tlb_flush_page_locked(env, mmu_idx, addr);
         }
     }
-
-	int index;
-	struct GvaUpdatedList *var;
-	unsigned long * tmp;
-
-	qemu_log("tlb_flush!!!\n");
-
-	memset(tlb_addr_cache[0], 0, sizeof(tlb_addr_cache[0]));
-	memset(tlb_addr_cache[1], 0, sizeof(tlb_addr_cache[1]));
-	memset(is_tlb_addr_cache[0], 0, sizeof(is_tlb_addr_cache[0]));
-	memset(is_tlb_addr_cache[1], 0, sizeof(is_tlb_addr_cache[1]));
-	memset(io_tlb_cache[0], 0, sizeof(io_tlb_cache[0]));
-	memset(io_tlb_cache[1], 0, sizeof(io_tlb_cache[1]));
-
-	if(unlikely(len_gva_list)){
-		qemu_log("clean!\n");
-		index = 0;
-		tmp = g_malloc(len_gva_list * sizeof(unsigned long));
-		QLIST_FOREACH(var, &gva_updated_list, entry){
-			tmp[index++] = var-> addr;
-			QLIST_REMOVE(var, entry);
-			g_free(var);
-		}
-		my_espt_update(tmp);
-		g_free(tmp);
-		memset(is_gva_updated, 0, sizeof(is_gva_updated));
-		len_gva_list = 0;
-	}
 
     qemu_spin_unlock(&env_tlb(env)->c.lock);
 
@@ -818,7 +805,6 @@ void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
     /*tlb_debug("vaddr=" TARGET_FMT_lx " paddr=0x" TARGET_FMT_plx
               " prot=%x idx=%d\n",
               vaddr, paddr, prot, mmu_idx);*/
-	qemu_log("vaddr_page: "TARGET_FMT_lx", section name: %s\n", vaddr_page, section->mr->name);
     address = vaddr_page;
     if (size < TARGET_PAGE_SIZE) {
         /* Repeat the MMU check and TLB fill on every access.  */
@@ -1509,7 +1495,7 @@ void my_load_helper_handler(int sig, siginfo_t *info, void *ucontext){
 	int asidx = loadHelperPack.asidx;
 	target_ulong addr = loadHelperPack.addr;
 
-	qemu_log("In my_load_helper_handler, pid: %d, gva: "TARGET_FMT_lx"\n", pid, addr);
+	//qemu_log("In my_load_helper_handler, pid: %d, gva: "TARGET_FMT_lx"\n", pid, addr);
 	
 	if(!is_gva_updated[asidx][addr >> TARGET_PAGE_BITS]){
 		//qemu_log("len: %d, addr: %lx\n", len_gva_list, gva);
@@ -1532,7 +1518,7 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
             uintptr_t retaddr, MemOp op, bool code_read,
             FullLoadHelper *full_load)
 {
-	qemu_log("In load_helper "TARGET_FMT_lx"\n", addr);
+	//qemu_log("In load_helper "TARGET_FMT_lx"\n", addr);
 
 	struct sigaction act = {0};
 	act.sa_sigaction = my_load_helper_handler;
@@ -1818,7 +1804,7 @@ void my_store_helper_handler(int sig, siginfo_t *info, void *ucontext) {
 	int asidx = storeHelperPack.asidx;
 	target_ulong addr = storeHelperPack.addr;
 
-	qemu_log("In my_store_helper_handler, pid: %d, gva: "TARGET_FMT_lx"\n", pid, addr);
+	//qemu_log("In my_store_helper_handler, pid: %d, gva: "TARGET_FMT_lx"\n", pid, addr);
 
 	if(!is_gva_updated[asidx][addr >> TARGET_PAGE_BITS]){
 		elem->addr = addr;
@@ -1839,7 +1825,7 @@ static inline void QEMU_ALWAYS_INLINE
 store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
              TCGMemOpIdx oi, uintptr_t retaddr, MemOp op)
 {
-	qemu_log("In store_helper "TARGET_FMT_lx"\n", addr);
+	//qemu_log("In store_helper "TARGET_FMT_lx"\n", addr);
 	
 	struct sigaction act = {0};
 	act.sa_sigaction = my_store_helper_handler;
