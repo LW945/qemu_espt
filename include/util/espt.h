@@ -62,8 +62,8 @@ struct MyNetlinkPack{
 typedef QLIST_HEAD(, PagetableListener) PagetableListenerHead;
 typedef QLIST_HEAD(, GvaUpdatedList) GvaUpdatedListHead;
 
-void my_load_helper_handler(int sig, siginfo_t *info, void *ucontext);
-void my_store_helper_handler(int sig, siginfo_t *info, void *ucontext);
+void my_load_helper_handler(int sig);
+void my_store_helper_handler(int sig);
 void netlink_init(int *skfd, struct sockaddr_nl *saddr, struct sockaddr_nl *daddr);
 void netlink_send(int skfd, struct sockaddr_nl saddr, struct sockaddr_nl daddr, struct MyNetlinkPack msg);
 void netlink_recv(int skfd, struct sockaddr_nl daddr, struct nlmsghdr *nlh_rev);
