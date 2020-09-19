@@ -1574,8 +1574,10 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         need_swap = size > 1 && (tlb_addr & MY_TLB_BSWAP);
 
         /* Handle I/O access.  */
+
         if (likely(tlb_addr & MY_TLB_MMIO)) {
 			//qemu_log("I/O Load gva: %lx\n", addr);
+          
             return io_readx(env, iotlbentry, mmu_idx, addr, retaddr,
                             access_type, op ^ (need_swap * MO_BSWAP));
         }
@@ -1851,6 +1853,7 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
 	}
 
     /* Handle anything that isn't just a straight memory access.  */
+
     if (unlikely(tlb_addr)) {
         CPUIOTLBEntry *iotlbentry;
         bool need_swap;
@@ -1872,8 +1875,10 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
         need_swap = size > 1 && (tlb_addr & MY_TLB_BSWAP);
 
         /* Handle I/O access.  */
+
         if (tlb_addr & MY_TLB_MMIO) {
 			//qemu_log("MMIO Store gva: %x\n", iotlbentry->addr);
+
             io_writex(env, iotlbentry, mmu_idx, val, addr, retaddr,
                       op ^ (need_swap * MO_BSWAP));
             return;
