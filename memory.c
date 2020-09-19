@@ -51,10 +51,14 @@ static QTAILQ_HEAD(, AddressSpace) address_spaces
 
 static GHashTable *flat_views;
 
-bool is_gva_updated[(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
+bool is_gva_updated[2][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
 GvaUpdatedListHead gva_updated_list
 	= QLIST_HEAD_INITIALIZER(gva_updated_list);
 int len_gva_list;
+
+uint8_t tlb_addr_cache[2][NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1][3];
+bool is_tlb_addr_cache[2][NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1][3];
+CPUIOTLBEntry io_tlb_cache[2][NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
 typedef struct AddrRange AddrRange;
 
 /*
@@ -724,7 +728,6 @@ static FlatView *generate_memory_topology(MemoryRegion *mr)
     FlatView *view;
 	struct GvaUpdatedList *var;
 	unsigned long * tmp;
-
     view = flatview_new(mr);
 
     if (mr) {
@@ -740,7 +743,10 @@ static FlatView *generate_memory_topology(MemoryRegion *mr)
             section_from_flat_range(&view->ranges[i], view);
         flatview_add_to_dispatch(view, &mrs);
     }
+	//Used for maintaining espt
+	qemu_log("upadte!\n");
 	if(unlikely(len_gva_list)){
+		qemu_log("clean!\n");
 		index = 0;
 		tmp = g_malloc(len_gva_list * sizeof(unsigned long));
 		QLIST_FOREACH(var, &gva_updated_list, entry){
@@ -752,6 +758,8 @@ static FlatView *generate_memory_topology(MemoryRegion *mr)
 		g_free(tmp);
 		memset(is_gva_updated, 0, sizeof(is_gva_updated));
 		len_gva_list = 0;
+
+		memset(is_tlb_addr_cache, 0, sizeof(is_tlb_addr_cache));
 	}
 	
     address_space_dispatch_compact(view->dispatch);

@@ -21,6 +21,19 @@
 #define MSG_LEN            125
 #define MAX_PLOAD        125
 
+#define MY_TLB_INVALID_MASK    (1 << 5)
+/* Set if TLB entry references a clean RAM page.  The iotlb entry will
+   contain the page physical address.  */
+#define MY_TLB_NOTDIRTY        (1 << 4)
+/* Set if TLB entry is an IO callback.  */
+#define MY_TLB_MMIO            (1 << 3)
+/* Set if TLB entry contains a watchpoint.  */
+#define MY_TLB_WATCHPOINT      (1 << 2)
+/* Set if TLB entry requires byte swap.  */
+#define MY_TLB_BSWAP           (1 << 1)
+/* Set if TLB entry writes ignored.  */
+#define MY_TLB_DISCARD_WRITE   (1 << 0)
+
 struct PagetableListener{
 	target_ulong addr;
 	QSLIST_ENTRY(PagetableListener) entry;
@@ -32,12 +45,9 @@ struct GvaUpdatedList{
 };
 
 struct MyElemPack{
-	CPUArchState *env;
+	CPUTLBEntry *entry;
 	target_ulong addr;
-	TCGMemOpIdx oi;
-	uintptr_t retaddr;
-	MemOp op;
-	bool code_read;
+	int asidx;
 };
 
 struct MyNetlinkPack{
@@ -52,8 +62,8 @@ struct MyNetlinkPack{
 typedef QLIST_HEAD(, PagetableListener) PagetableListenerHead;
 typedef QLIST_HEAD(, GvaUpdatedList) GvaUpdatedListHead;
 
-void my_load_helper_handler(int sig, siginfo_t *info, void *ucontext);
-void my_store_helper_handler(int sig, siginfo_t *info, void *ucontext);
+void my_load_helper_handler(int sig);
+void my_store_helper_handler(int sig);
 void netlink_init(int *skfd, struct sockaddr_nl *saddr, struct sockaddr_nl *daddr);
 void netlink_send(int skfd, struct sockaddr_nl saddr, struct sockaddr_nl daddr, struct MyNetlinkPack msg);
 void netlink_recv(int skfd, struct sockaddr_nl daddr, struct nlmsghdr *nlh_rev);
