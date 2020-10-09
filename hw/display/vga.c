@@ -2264,7 +2264,7 @@ MemoryRegion *vga_init_io(VGACommonState *s, Object *obj,
 
     *vga_ports = vga_portio_list;
     *vbe_ports = vbe_portio_list;
-	qemu_log("vga-lowmem!\n");
+
     vga_mem = g_malloc(sizeof(*vga_mem));
     memory_region_init_io(vga_mem, obj, &vga_mem_ops, s,
                           "vga-lowmem", 0x20000);

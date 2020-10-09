@@ -695,6 +695,7 @@ address_space_translate_for_iotlb(CPUState *cpu, int asidx, hwaddr addr,
     IOMMUTLBEntry iotlb;
     int iommu_idx;
     AddressSpaceDispatch *d = atomic_rcu_read(&cpu->cpu_ases[asidx].memory_dispatch);
+
     for (;;) {
         section = address_space_translate_internal(d, addr, &addr, plen, false);
 
@@ -2207,6 +2208,7 @@ static void ram_block_add(RAMBlock *new_block, Error **errp, bool shared)
 
     qemu_mutex_lock_ramlist();
     new_block->offset = find_ram_offset(new_block->max_length);
+
     if (!new_block->host) {
         if (xen_enabled()) {
             xen_ram_alloc(new_block->offset, new_block->max_length,
@@ -2332,7 +2334,6 @@ RAMBlock *qemu_ram_alloc_from_fd(ram_addr_t size, MemoryRegion *mr,
         error_propagate(errp, local_err);
         return NULL;
     }
-	printf("MR Name: %s, Ram Start: %0lx, Ram Size: %0lx, Ram Host: %0lx,\n", mr->name, new_block->offset, new_block->max_length, new_block->host);
     return new_block;
 
 }
@@ -2398,7 +2399,6 @@ RAMBlock *qemu_ram_alloc_internal(ram_addr_t size, ram_addr_t max_size,
         error_propagate(errp, local_err);
         return NULL;
     }
-	printf("MR Name: %s, Ram Start: %0lx, Ram Size: %0lx, Ram Host: %0lx,\n", mr->name, new_block->offset, new_block->max_length, new_block->host);
     return new_block;
 }
 
@@ -2935,20 +2935,6 @@ static void tcg_log_global_after_sync(MemoryListener *listener)
     }
 }
 
-/*void traverse_all_memory_region(MemoryRegion * root, int depth){
-	MemoryRegion * elem;
-	qemu_log("Depth: %d, Name: %s, start: %lx, size: %lx, size: %lx\n", depth, root->name, root->addr, int128_gethi(root->size), int128_getlo(root->size));
-	if(root->terminates == false){
-		QTAILQ_FOREACH(elem, &root->subregions, subregions_link) {
-			traverse_all_memory_region(elem, depth+1);
-			if(elem->alias){
-				traverse_all_memory_region(elem->alias, depth+1);				
-			}
-		}
-	}
-	return ;
-}*/
-
 static void tcg_commit(MemoryListener *listener)
 {
     CPUAddressSpace *cpuas;
@@ -2965,9 +2951,6 @@ static void tcg_commit(MemoryListener *listener)
      */
     d = address_space_to_dispatch(cpuas->as);
     atomic_rcu_set(&cpuas->memory_dispatch, d);
-	//qemu_log("####\n");
-	//qemu_log("CPUAS: %lx\n", cpuas);
-	//traverse_all_memory_region(cpuas->as->root, 0);
     tlb_flush(cpuas->cpu);
 }
 

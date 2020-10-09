@@ -1773,7 +1773,7 @@ static void *qemu_tcg_cpu_thread_fn(void *arg)
 
     /* process any pending work */
     cpu->exit_request = 1;
-	
+
     do {
         if (cpu_can_run(cpu)) {
             int r;

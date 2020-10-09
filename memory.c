@@ -35,7 +35,6 @@
 #include "hw/boards.h"
 #include "migration/vmstate.h"
 
-#include "util/espt.h"
 //#define DEBUG_UNASSIGNED
 
 static unsigned memory_region_transaction_depth;
@@ -51,14 +50,6 @@ static QTAILQ_HEAD(, AddressSpace) address_spaces
 
 static GHashTable *flat_views;
 
-bool is_gva_updated[2][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
-GvaUpdatedListHead gva_updated_list
-	= QLIST_HEAD_INITIALIZER(gva_updated_list);
-int len_gva_list;
-
-uint8_t tlb_addr_cache[2][NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1][3];
-bool is_tlb_addr_cache[2][NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1][3];
-CPUIOTLBEntry io_tlb_cache[2][NB_MMU_MODES][(0xFFFFFFFF >> TARGET_PAGE_BITS) + 1];
 typedef struct AddrRange AddrRange;
 
 /*
@@ -708,26 +699,12 @@ static MemoryRegion *memory_region_get_flatview_root(MemoryRegion *mr)
     return NULL;
 }
 
-void my_espt_update(unsigned long * list){
-	int skfd, pid = getpid();
-    struct nlmsghdr nlh_rev;
-    struct sockaddr_nl saddr, daddr;
-	struct MyNetlinkPack msg = {2, pid, len_gva_list, 0, 0, list};
-
-	netlink_init(&skfd, &saddr, &daddr);
-	netlink_send(skfd, saddr, daddr, msg);	
-	netlink_recv(skfd, daddr, &nlh_rev);
-	
-	return ;
-}
-
 /* Render a memory topology into a list of disjoint absolute ranges. */
 static FlatView *generate_memory_topology(MemoryRegion *mr)
 {
-    int i, index;
+    int i;
     FlatView *view;
-	struct GvaUpdatedList *var;
-	unsigned long * tmp;
+
     view = flatview_new(mr);
 
     if (mr) {
@@ -743,25 +720,6 @@ static FlatView *generate_memory_topology(MemoryRegion *mr)
             section_from_flat_range(&view->ranges[i], view);
         flatview_add_to_dispatch(view, &mrs);
     }
-	//Used for maintaining espt
-	qemu_log("upadte!\n");
-	if(unlikely(len_gva_list)){
-		qemu_log("clean!\n");
-		index = 0;
-		tmp = g_malloc(len_gva_list * sizeof(unsigned long));
-		QLIST_FOREACH(var, &gva_updated_list, entry){
-			tmp[index++] = var-> addr;
-			QLIST_REMOVE(var, entry);
-			g_free(var);
-		}
-		my_espt_update(tmp);
-		g_free(tmp);
-		memset(is_gva_updated, 0, sizeof(is_gva_updated));
-		len_gva_list = 0;
-
-		memset(is_tlb_addr_cache, 0, sizeof(is_tlb_addr_cache));
-	}
-	
     address_space_dispatch_compact(view->dispatch);
     g_hash_table_replace(flat_views, mr, view);
 
@@ -1093,6 +1051,7 @@ void memory_region_transaction_begin(void)
 void memory_region_transaction_commit(void)
 {
     AddressSpace *as;
+
     assert(memory_region_transaction_depth);
     assert(qemu_mutex_iothread_locked());
 
@@ -1564,7 +1523,6 @@ void memory_region_init_ram_shared_nomigrate(MemoryRegion *mr,
     mr->destructor = memory_region_destructor_ram;
     mr->ram_block = qemu_ram_alloc(size, share, mr, &err);
     mr->dirty_log_mask = tcg_enabled() ? (1 << DIRTY_MEMORY_CODE) : 0;
-
     if (err) {
         mr->size = int128_zero();
         object_unparent(OBJECT(mr));

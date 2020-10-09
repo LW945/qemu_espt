@@ -126,8 +126,9 @@ void *qemu_ram_mmap(int fd,
     pagesize = qemu_real_host_page_size;
     flags = MAP_PRIVATE | MAP_ANONYMOUS;
 #endif
-	printf("ram pid %d\n", getpid());
+
     guardptr = mmap(0, total, PROT_NONE, flags, guardfd, 0);
+
     if (guardptr == MAP_FAILED) {
         return MAP_FAILED;
     }
@@ -147,6 +148,7 @@ void *qemu_ram_mmap(int fd,
 
     ptr = mmap(guardptr + offset, size, PROT_READ | PROT_WRITE,
                flags | map_sync_flags, fd, 0);
+
     if (ptr == MAP_FAILED && map_sync_flags) {
         if (errno == ENOTSUP) {
             char *proc_link, *file_name;
@@ -190,6 +192,7 @@ void *qemu_ram_mmap(int fd,
     if (total > size + pagesize) {
         munmap(ptr + size + pagesize, total - size - pagesize);
     }
+
     return ptr;
 }
 

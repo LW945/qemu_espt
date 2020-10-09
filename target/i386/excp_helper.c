@@ -641,6 +641,7 @@ do_check_protect_pse36:
        avoid filling it too fast */
     vaddr = addr & TARGET_PAGE_MASK;
     paddr &= TARGET_PAGE_MASK;
+
     assert(prot & (1 << is_write1));
     tlb_set_page_with_attrs(cs, vaddr, paddr, cpu_get_mem_attrs(env),
                             prot, mmu_idx, page_size);

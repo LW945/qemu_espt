@@ -36,7 +36,6 @@ void translator_loop(const TranslatorOps *ops, DisasContextBase *db,
 {
     int bp_insn = 0;
     bool plugin_enabled;
-	static int cnt = 0;
 
     /* Initialize DisasContext */
     db->tb = tb;
@@ -102,6 +101,7 @@ void translator_loop(const TranslatorOps *ops, DisasContextBase *db,
         } else {
             ops->translate_insn(db, cpu);
         }
+
         /* Stop translation if translate_insn so indicated.  */
         if (db->is_jmp != DISAS_NEXT) {
             break;
