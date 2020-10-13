@@ -37,6 +37,7 @@
 #ifdef CONFIG_PLUGIN
 #include "qemu/plugin-memory.h"
 #endif
+#include "sysemu/espt_int.h"
 
 /* DEBUG defines, enable DEBUG_TLB_LOG to log to the CPU_LOG_MMU target */
 /* #define DEBUG_TLB */
@@ -1396,83 +1397,46 @@ load_memop(const void *haddr, MemOp op)
     }
 }
 
+struct HelperElem helper_elem;
+
+static void set_helper_elem(CPUArchState *env, target_ulong addr, uint64_t val,
+             TCGMemOpIdx oi, uintptr_t retaddr, MemOp op, bool code_read, bool is_load)
+{
+	helper_elem.env = env;
+	helper_elem.addr = addr;
+	helper_elem.retaddr = retaddr;
+	helper_elem.oi = oi;
+	helper_elem.op = op;
+
+	helper_elem.code_read = code_read;
+	helper_elem.write_val = val;
+	helper_elem.is_load = is_load;
+	return;
+}	
+
 static inline uint64_t QEMU_ALWAYS_INLINE
 load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
             uintptr_t retaddr, MemOp op, bool code_read,
             FullLoadHelper *full_load)
 {
     uintptr_t mmu_idx = get_mmuidx(oi);
-    uintptr_t index = tlb_index(env, mmu_idx, addr);
-    CPUTLBEntry *entry = tlb_entry(env, mmu_idx, addr);
-    target_ulong tlb_addr = code_read ? entry->addr_code : entry->addr_read;
-    const size_t tlb_off = code_read ?
-        offsetof(CPUTLBEntry, addr_code) : offsetof(CPUTLBEntry, addr_read);
     const MMUAccessType access_type =
         code_read ? MMU_INST_FETCH : MMU_DATA_LOAD;
     unsigned a_bits = get_alignment_bits(get_memop(oi));
-    void *haddr;
+	size_t size = memop_size(op);
+    void *haddr = NULL;
     uint64_t res;
-    size_t size = memop_size(op);
+
+	set_helper_elem(env, addr, 0, oi, retaddr, op, code_read, 1);
 
     /* Handle CPU specific unaligned behaviour */
     if (addr & ((1 << a_bits) - 1)) {
         cpu_unaligned_access(env_cpu(env), addr, access_type,
                              mmu_idx, retaddr);
     }
-
-    /* If the TLB entry is for a different page, reload and try again.  */
-    if (!tlb_hit(tlb_addr, addr)) {
-        if (!victim_tlb_hit(env, mmu_idx, index, tlb_off,
-                            addr & TARGET_PAGE_MASK)) {
-            tlb_fill(env_cpu(env), addr, size,
-                     access_type, mmu_idx, retaddr);
-            index = tlb_index(env, mmu_idx, addr);
-            entry = tlb_entry(env, mmu_idx, addr);
-        }
-        tlb_addr = code_read ? entry->addr_code : entry->addr_read;
-        tlb_addr &= ~TLB_INVALID_MASK;
-    }
-
-    /* Handle anything that isn't just a straight memory access.  */
-    if (unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
-        CPUIOTLBEntry *iotlbentry;
-        bool need_swap;
-
-        /* For anything that is unaligned, recurse through full_load.  */
-        if ((addr & (size - 1)) != 0) {
-            goto do_unaligned_access;
-        }
-
-        iotlbentry = &env_tlb(env)->d[mmu_idx].iotlb[index];
-
-        /* Handle watchpoints.  */
-        if (unlikely(tlb_addr & TLB_WATCHPOINT)) {
-            /* On watchpoint hit, this will longjmp out.  */
-            cpu_check_watchpoint(env_cpu(env), addr, size,
-                                 iotlbentry->attrs, BP_MEM_READ, retaddr);
-        }
-
-        need_swap = size > 1 && (tlb_addr & TLB_BSWAP);
-
-        /* Handle I/O access.  */
-        if (likely(tlb_addr & TLB_MMIO)) {
-            return io_readx(env, iotlbentry, mmu_idx, addr, retaddr,
-                            access_type, op ^ (need_swap * MO_BSWAP));
-        }
-
-        haddr = (void *)((uintptr_t)addr + entry->addend);
-
-        /*
-         * Keep these two load_memop separate to ensure that the compiler
-         * is able to fold the entire function to a single instruction.
-         * There is a build-time assert inside to remind you of this.  ;-)
-         */
-        if (unlikely(need_swap)) {
-            return load_memop(haddr, op ^ MO_BSWAP);
-        }
-        return load_memop(haddr, op);
-    }
-
+    if ((addr & (size - 1)) != 0) {
+        goto do_unaligned_access;
+	}
     /* Handle slow unaligned access (it spans two pages or IO).  */
     if (size > 1
         && unlikely((addr & ~TARGET_PAGE_MASK) + size - 1
@@ -1497,7 +1461,6 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         return res & MAKE_64BIT_MASK(0, size * 8);
     }
 
-    haddr = (void *)((uintptr_t)addr + entry->addend);
     return load_memop(haddr, op);
 }
 
