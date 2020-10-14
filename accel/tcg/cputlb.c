@@ -1399,6 +1399,58 @@ load_memop(const void *haddr, MemOp op)
 
 struct HelperElem helper_elem;
 
+static void sigsegv_handler(int sig){
+	CPUArchState *env = helper_elem.env;
+	target_ulong vaddr = helper_elem.addr;
+	TCGMemOpIdx oi = helper_elem.oi;
+	uintptr_t retaddr = helper_elem.retaddr;
+	MemOp op = helper_elem.op;
+	bool code_read = helper_elem.code_read;
+	uint64_t write_val = helper_elem.write_val;
+	bool is_load = helper_elem.is_load;
+
+	int pid = getpid();
+	uintptr_t mmu_idx = get_mmuidx(oi);
+	MMUAccessType access_type =
+        code_read ? MMU_INST_FETCH : MMU_DATA_LOAD;
+	size_t size = memop_size(op);
+	CPUIOTLBEntry iotlbentry;
+	struct ESPTEntry espt_entry;
+	
+	//extern asmlinkage void espt_vmx_return(void);
+	
+	hwaddr paddr, iotlb;
+	uintptr_t addend, hva;
+	
+	if(!is_load)
+		access_type = MMU_DATA_STORE;
+	
+	assert(handle_espt_page_fault(env_cpu(env), vaddr, size,
+		access_type, mmu_idx, retaddr, &paddr, &iotlb, &addend));				//gva to gpa
+		
+	iotlbentry.addr = iotlb - (vaddr & TARGET_PAGE_MASK);
+	iotlbentry.attrs = cpu_get_mem_attrs(env);
+	
+	if(!espt_find_gpa_in_slot(paddr)){	//try to find gpa in tcg_memory_region //MMIO
+		if(is_load)
+			io_readx(env, &iotlbentry, mmu_idx, vaddr, retaddr, access_type, op);//todo
+		else
+			io_writex(env, &iotlbentry, mmu_idx, write_val, vaddr, retaddr, op);
+		//espt_vmx_return(); //todo
+	}		
+	else{
+		hva = (uintptr_t)vaddr + addend;
+		espt_entry.set_entry.gva = vaddr;
+		espt_entry.set_entry.hva = hva;
+		espt_entry.set_entry.pid = pid;
+		if(!espt_ioctl(ESPT_SET_ENTRY, &espt_entry))
+			espt_entry_list_insert(vaddr);
+		if(!is_load)
+			notdirty_write(env_cpu(env), vaddr, size, &iotlbentry, retaddr);
+	}
+	return;
+}
+
 static void set_helper_elem(CPUArchState *env, target_ulong addr, uint64_t val,
              TCGMemOpIdx oi, uintptr_t retaddr, MemOp op, bool code_read, bool is_load)
 {
@@ -1424,19 +1476,21 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         code_read ? MMU_INST_FETCH : MMU_DATA_LOAD;
     unsigned a_bits = get_alignment_bits(get_memop(oi));
 	size_t size = memop_size(op);
-    void *haddr = NULL;
     uint64_t res;
 
 	set_helper_elem(env, addr, 0, oi, retaddr, op, code_read, 1);
+	signal(SIGSEGV, &sigsegv_handler);
 
     /* Handle CPU specific unaligned behaviour */
     if (addr & ((1 << a_bits) - 1)) {
         cpu_unaligned_access(env_cpu(env), addr, access_type,
                              mmu_idx, retaddr);
     }
+
     if ((addr & (size - 1)) != 0) {
         goto do_unaligned_access;
 	}
+
     /* Handle slow unaligned access (it spans two pages or IO).  */
     if (size > 1
         && unlikely((addr & ~TARGET_PAGE_MASK) + size - 1
@@ -1461,7 +1515,7 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         return res & MAKE_64BIT_MASK(0, size * 8);
     }
 
-    return load_memop(haddr, op);
+    return load_memop((void *)addr, op);
 }
 
 /*
@@ -1627,13 +1681,11 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
              TCGMemOpIdx oi, uintptr_t retaddr, MemOp op)
 {
     uintptr_t mmu_idx = get_mmuidx(oi);
-    uintptr_t index = tlb_index(env, mmu_idx, addr);
-    CPUTLBEntry *entry = tlb_entry(env, mmu_idx, addr);
-    target_ulong tlb_addr = tlb_addr_write(entry);
-    const size_t tlb_off = offsetof(CPUTLBEntry, addr_write);
     unsigned a_bits = get_alignment_bits(get_memop(oi));
-    void *haddr;
     size_t size = memop_size(op);
+
+	set_helper_elem(env, addr, val, oi, retaddr, op, 0, 0);
+	signal(SIGSEGV, &sigsegv_handler);
 
     /* Handle CPU specific unaligned behaviour */
     if (addr & ((1 << a_bits) - 1)) {
@@ -1641,69 +1693,8 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
                              mmu_idx, retaddr);
     }
 
-    /* If the TLB entry is for a different page, reload and try again.  */
-    if (!tlb_hit(tlb_addr, addr)) {
-        if (!victim_tlb_hit(env, mmu_idx, index, tlb_off,
-            addr & TARGET_PAGE_MASK)) {
-            tlb_fill(env_cpu(env), addr, size, MMU_DATA_STORE,
-                     mmu_idx, retaddr);
-            index = tlb_index(env, mmu_idx, addr);
-            entry = tlb_entry(env, mmu_idx, addr);
-        }
-        tlb_addr = tlb_addr_write(entry) & ~TLB_INVALID_MASK;
-    }
-
-    /* Handle anything that isn't just a straight memory access.  */
-    if (unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
-        CPUIOTLBEntry *iotlbentry;
-        bool need_swap;
-
-        /* For anything that is unaligned, recurse through byte stores.  */
-        if ((addr & (size - 1)) != 0) {
-            goto do_unaligned_access;
-        }
-
-        iotlbentry = &env_tlb(env)->d[mmu_idx].iotlb[index];
-
-        /* Handle watchpoints.  */
-        if (unlikely(tlb_addr & TLB_WATCHPOINT)) {
-            /* On watchpoint hit, this will longjmp out.  */
-            cpu_check_watchpoint(env_cpu(env), addr, size,
-                                 iotlbentry->attrs, BP_MEM_WRITE, retaddr);
-        }
-
-        need_swap = size > 1 && (tlb_addr & TLB_BSWAP);
-
-        /* Handle I/O access.  */
-        if (tlb_addr & TLB_MMIO) {
-            io_writex(env, iotlbentry, mmu_idx, val, addr, retaddr,
-                      op ^ (need_swap * MO_BSWAP));
-            return;
-        }
-
-        /* Ignore writes to ROM.  */
-        if (unlikely(tlb_addr & TLB_DISCARD_WRITE)) {
-            return;
-        }
-
-        /* Handle clean RAM pages.  */
-        if (tlb_addr & TLB_NOTDIRTY) {
-            notdirty_write(env_cpu(env), addr, size, iotlbentry, retaddr);
-        }
-
-        haddr = (void *)((uintptr_t)addr + entry->addend);
-
-        /*
-         * Keep these two store_memop separate to ensure that the compiler
-         * is able to fold the entire function to a single instruction.
-         * There is a build-time assert inside to remind you of this.  ;-)
-         */
-        if (unlikely(need_swap)) {
-            store_memop(haddr, val, op ^ MO_BSWAP);
-        } else {
-            store_memop(haddr, val, op);
-        }
-        return;
+    if ((addr & (size - 1)) != 0) {
+        goto do_unaligned_access;
     }
 
     /* Handle slow unaligned access (it spans two pages or IO).  */
@@ -1711,47 +1702,7 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
         && unlikely((addr & ~TARGET_PAGE_MASK) + size - 1
                      >= TARGET_PAGE_SIZE)) {
         int i;
-        uintptr_t index2;
-        CPUTLBEntry *entry2;
-        target_ulong page2, tlb_addr2;
-        size_t size2;
-
     do_unaligned_access:
-        /*
-         * Ensure the second page is in the TLB.  Note that the first page
-         * is already guaranteed to be filled, and that the second page
-         * cannot evict the first.
-         */
-        page2 = (addr + size) & TARGET_PAGE_MASK;
-        size2 = (addr + size) & ~TARGET_PAGE_MASK;
-        index2 = tlb_index(env, mmu_idx, page2);
-        entry2 = tlb_entry(env, mmu_idx, page2);
-        tlb_addr2 = tlb_addr_write(entry2);
-        if (!tlb_hit_page(tlb_addr2, page2)) {
-            if (!victim_tlb_hit(env, mmu_idx, index2, tlb_off, page2)) {
-                tlb_fill(env_cpu(env), page2, size2, MMU_DATA_STORE,
-                         mmu_idx, retaddr);
-                index2 = tlb_index(env, mmu_idx, page2);
-                entry2 = tlb_entry(env, mmu_idx, page2);
-            }
-            tlb_addr2 = tlb_addr_write(entry2);
-        }
-
-        /*
-         * Handle watchpoints.  Since this may trap, all checks
-         * must happen before any store.
-         */
-        if (unlikely(tlb_addr & TLB_WATCHPOINT)) {
-            cpu_check_watchpoint(env_cpu(env), addr, size - size2,
-                                 env_tlb(env)->d[mmu_idx].iotlb[index].attrs,
-                                 BP_MEM_WRITE, retaddr);
-        }
-        if (unlikely(tlb_addr2 & TLB_WATCHPOINT)) {
-            cpu_check_watchpoint(env_cpu(env), page2, size2,
-                                 env_tlb(env)->d[mmu_idx].iotlb[index2].attrs,
-                                 BP_MEM_WRITE, retaddr);
-        }
-
         /*
          * XXX: not efficient, but simple.
          * This loop must go in the forward direction to avoid issues
@@ -1771,8 +1722,7 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
         return;
     }
 
-    haddr = (void *)((uintptr_t)addr + entry->addend);
-    store_memop(haddr, val, op);
+    store_memop((void *)addr, val, op);
 }
 
 void helper_ret_stb_mmu(CPUArchState *env, target_ulong addr, uint8_t val,

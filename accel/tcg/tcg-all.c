@@ -30,6 +30,7 @@
 #include "cpu.h"
 #include "sysemu/cpus.h"
 #include "qemu/main-loop.h"
+#include "sysemu/espt_int.h"
 
 unsigned long tcg_tb_size;
 
@@ -60,8 +61,13 @@ static void tcg_handle_interrupt(CPUState *cpu, int mask)
 
 static int tcg_init(MachineState *ms)
 {
+	int r;
     tcg_exec_init(tcg_tb_size * 1024 * 1024);
     cpu_interrupt_handler = tcg_handle_interrupt;
+	r = espt_init();
+	if(r){
+		qemu_log("espt_init_error!\n");	
+	}
     return 0;
 }
 
