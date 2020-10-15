@@ -1412,6 +1412,7 @@ static void sigsegv_handler(int sig){
 	uint64_t write_val = helper_elem.write_val;
 	bool is_load = helper_elem.is_load;
 
+	espt_print_all_slot();
 	qemu_log("sigsegv_handler addr: " TARGET_FMT_lx "\n", vaddr);
 
 	uintptr_t mmu_idx = get_mmuidx(oi);

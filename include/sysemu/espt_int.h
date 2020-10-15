@@ -86,6 +86,8 @@ int espt_entry_flush_addr(target_ulong addr);
 
 int espt_entry_flush_all(void);
 
+void espt_print_all_slot(void);
+
 void espt_entry_list_insert(target_ulong elem);
 
 bool espt_find_gpa_in_slot(hwaddr gpa);
