@@ -24,8 +24,10 @@
 
 #include <sys/ioctl.h>
 
-#define ESPT_SET_ENTRY 0
-#define ESPT_FLUSH_ENTRY 1
+#define ESPT_INIT 0
+#define ESPT_SET_ENTRY 1
+#define ESPT_FLUSH_ENTRY 2
+#define ESPT_MMIO_ENTRY 3
 
 typedef struct ESPTMemorySlot{
 	hwaddr guest_phys_addr;
@@ -36,6 +38,7 @@ typedef struct ESPTMemorySlot{
 
 typedef struct ESPTState{
 	int fd;
+	int pid;
 	struct MemoryListener memory_listener;
 	
 	QLIST_HEAD(, ESPTMemorySlot) memory_slot;
@@ -51,13 +54,16 @@ struct ESPTEntry{
 		struct{
 			target_ulong gva;
 			uintptr_t hva;
-			int pid;
 		}set_entry;
 		struct{
 			target_ulong *list;
 			int size;
-			int pid;
 		}flush_entry;
+		struct{
+			target_ulong gva;
+			uint64_t val;
+			int add;
+		}mmio_entry;
 	};
 };
 
@@ -75,6 +81,8 @@ struct HelperElem{
 int espt_ioctl(int type, ...);
 
 int espt_init(void);
+
+int espt_entry_flush_addr(target_ulong addr);
 
 int espt_entry_flush_all(void);
 

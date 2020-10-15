@@ -33,6 +33,27 @@ void espt_entry_list_insert(target_ulong elem)
 	entry->addr_list[entry->size++] = elem;
 }
 
+int espt_entry_flush_addr(target_ulong addr)
+{	struct ESPTEntry espt_entry;
+	struct ESPTFlushEntryVec * entry = &espt_state.espt_entry;
+	int r = -1;	
+	target_ulong *addr_list = (target_ulong *)g_malloc0(sizeof(target_ulong));
+	*addr_list  = addr;
+
+	espt_entry.flush_entry.list = addr_list;
+	espt_entry.flush_entry.size = 1;
+	
+	r = espt_ioctl(ESPT_FLUSH_ENTRY, &espt_entry);
+	if(r)
+		goto out;
+	r = 0;
+
+out:
+	g_free(entry->addr_list);
+	espt_entry_list_init();
+	return r;
+}
+
 int espt_entry_flush_all(void)
 {	struct ESPTEntry espt_entry;
 	struct ESPTFlushEntryVec * entry = &espt_state.espt_entry;
@@ -40,16 +61,15 @@ int espt_entry_flush_all(void)
 
 	espt_entry.flush_entry.list = entry->addr_list;
 	espt_entry.flush_entry.size = entry->size;
-	espt_entry.flush_entry.pid = getpid();
 	
 	r = espt_ioctl(ESPT_FLUSH_ENTRY, &espt_entry);
 	if(r)
 		goto out;
+	r = 0;
 
+out:
 	g_free(entry->addr_list);
 	espt_entry_list_init();
-	r = 0;
-out:
 	return r;
 }
 
@@ -222,6 +242,7 @@ static void espt_region_add(MemoryListener *listener,
 {
     memory_region_ref(section->mr);
     espt_set_phys_mem(section, true);
+	qemu_log("espt_region_add!\n");
 }
 
 static void espt_region_del(MemoryListener *listener,
@@ -229,6 +250,13 @@ static void espt_region_del(MemoryListener *listener,
 {
     espt_set_phys_mem(section, false);
     memory_region_unref(section->mr);
+	qemu_log("espt_region_del!\n");
+}
+
+static void espt_commit(MemoryListener *listener)
+{
+	if(espt_entry_flush_all())
+		qemu_log("flush_all OK!\n");
 }
 
 static void espt_memory_listener_register(AddressSpace *as)
@@ -236,6 +264,7 @@ static void espt_memory_listener_register(AddressSpace *as)
 	ESPTState *s = &espt_state;
     s->memory_listener.region_add = espt_region_add;
     s->memory_listener.region_del = espt_region_del;
+	s->memory_listener.commit = espt_commit;
     s->memory_listener.priority = 10;
 
     memory_listener_register(&s->memory_listener, as);
@@ -264,6 +293,7 @@ int espt_init(void)
 	int ret;
 	ESPTState *s = &espt_state;
 	espt_entry_list_init();
+	s->pid = getpid();
 	s->fd = qemu_open("/dev/espt", O_RDWR);
 	if (s->fd == -1) {
         fprintf(stderr, "Could not access espt kernel module: %m\n");
@@ -271,7 +301,13 @@ int espt_init(void)
         goto err;
     }
 	espt_memory_listener_register(&address_space_memory);
+
+	if(espt_ioctl(ESPT_INIT, &s->pid)){
+		ret = -errno;
+		goto err;
+	}
 	return 0;
+
 err:
 	assert(ret < 0);
 	if (s->fd != -1) {

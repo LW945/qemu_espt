@@ -353,6 +353,7 @@ void tlb_flush_by_mmuidx(CPUState *cpu, uint16_t idxmap)
 void tlb_flush(CPUState *cpu)
 {
     tlb_flush_by_mmuidx(cpu, ALL_MMUIDX_BITS);
+	espt_entry_flush_all();
 }
 
 void tlb_flush_by_mmuidx_all_cpus(CPUState *src_cpu, uint16_t idxmap)
@@ -500,6 +501,7 @@ void tlb_flush_page_by_mmuidx(CPUState *cpu, target_ulong addr, uint16_t idxmap)
 void tlb_flush_page(CPUState *cpu, target_ulong addr)
 {
     tlb_flush_page_by_mmuidx(cpu, addr, ALL_MMUIDX_BITS);
+	espt_entry_flush_addr(addr);
 }
 
 void tlb_flush_page_by_mmuidx_all_cpus(CPUState *src_cpu, target_ulong addr,
@@ -1398,6 +1400,7 @@ load_memop(const void *haddr, MemOp op)
 }
 
 struct HelperElem helper_elem;
+bool has_mmio;
 
 static void sigsegv_handler(int sig){
 	CPUArchState *env = helper_elem.env;
@@ -1409,7 +1412,8 @@ static void sigsegv_handler(int sig){
 	uint64_t write_val = helper_elem.write_val;
 	bool is_load = helper_elem.is_load;
 
-	int pid = getpid();
+	qemu_log("sigsegv_handler addr: " TARGET_FMT_lx "\n", vaddr);
+
 	uintptr_t mmu_idx = get_mmuidx(oi);
 	MMUAccessType access_type =
         code_read ? MMU_INST_FETCH : MMU_DATA_LOAD;
@@ -1432,17 +1436,21 @@ static void sigsegv_handler(int sig){
 	iotlbentry.attrs = cpu_get_mem_attrs(env);
 	
 	if(!espt_find_gpa_in_slot(paddr)){	//try to find gpa in tcg_memory_region //MMIO
+		uint64_t read_val = 0;
 		if(is_load)
-			io_readx(env, &iotlbentry, mmu_idx, vaddr, retaddr, access_type, op);//todo
+			read_val = io_readx(env, &iotlbentry, mmu_idx, vaddr, retaddr, access_type, op);//todo
 		else
 			io_writex(env, &iotlbentry, mmu_idx, write_val, vaddr, retaddr, op);
-		//espt_vmx_return(); //todo
+		espt_entry.mmio_entry.gva = vaddr;
+		espt_entry.mmio_entry.val = read_val;
+		espt_entry.mmio_entry.add = 1;
+		has_mmio = 1;
+		espt_ioctl(ESPT_MMIO_ENTRY, &espt_entry);
 	}		
 	else{
 		hva = (uintptr_t)vaddr + addend;
 		espt_entry.set_entry.gva = vaddr;
 		espt_entry.set_entry.hva = hva;
-		espt_entry.set_entry.pid = pid;
 		if(!espt_ioctl(ESPT_SET_ENTRY, &espt_entry))
 			espt_entry_list_insert(vaddr);
 		if(!is_load)
@@ -1466,11 +1474,23 @@ static void set_helper_elem(CPUArchState *env, target_ulong addr, uint64_t val,
 	return;
 }	
 
+static void espt_mmio_redo(target_ulong gva)
+{
+	struct ESPTEntry espt_entry;
+	if(has_mmio){
+		espt_entry.mmio_entry.gva = gva;
+		espt_entry.mmio_entry.add = 0;
+		espt_ioctl(ESPT_MMIO_ENTRY, &espt_entry);
+		has_mmio = 0;
+	}
+}
+
 static inline uint64_t QEMU_ALWAYS_INLINE
 load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
             uintptr_t retaddr, MemOp op, bool code_read,
             FullLoadHelper *full_load)
 {
+	qemu_log("load_helper addr: " TARGET_FMT_lx "\n", addr);
     uintptr_t mmu_idx = get_mmuidx(oi);
     const MMUAccessType access_type =
         code_read ? MMU_INST_FETCH : MMU_DATA_LOAD;
@@ -1515,7 +1535,10 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         return res & MAKE_64BIT_MASK(0, size * 8);
     }
 
-    return load_memop((void *)addr, op);
+    res = load_memop((void *)addr, op);
+	espt_mmio_redo(addr);
+		
+	return res;
 }
 
 /*
@@ -1680,6 +1703,7 @@ static inline void QEMU_ALWAYS_INLINE
 store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
              TCGMemOpIdx oi, uintptr_t retaddr, MemOp op)
 {
+	qemu_log("store_helper addr: " TARGET_FMT_lx "\n", addr);
     uintptr_t mmu_idx = get_mmuidx(oi);
     unsigned a_bits = get_alignment_bits(get_memop(oi));
     size_t size = memop_size(op);
@@ -1723,6 +1747,7 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
     }
 
     store_memop((void *)addr, val, op);
+	espt_mmio_redo(addr);
 }
 
 void helper_ret_stb_mmu(CPUArchState *env, target_ulong addr, uint8_t val,
