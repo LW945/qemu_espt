@@ -24,10 +24,13 @@
 
 #include <sys/ioctl.h>
 
-#define ESPT_INIT 0
-#define ESPT_SET_ENTRY 1
-#define ESPT_FLUSH_ENTRY 2
-#define ESPT_MMIO_ENTRY 3
+#define ESPTIO 0xAF
+
+#define ESPT_INIT _IOR(ESPTIO, 0x1, int)
+#define ESPT_SET_ENTRY _IOR(ESPTIO, 0x2, struct ESPTEntry)
+#define ESPT_FLUSH_ENTRY _IOR(ESPTIO, 0x3, struct ESPTEntry)
+#define ESPT_MMIO_ENTRY _IOR(ESPTIO, 0x4, struct ESPTEntry)
+#define ESPT_PRINT_ENTRY _IOR(ESPTIO, 0x5, struct ESPTEntry)
 
 typedef struct ESPTMemorySlot{
 	hwaddr guest_phys_addr;
@@ -64,6 +67,9 @@ struct ESPTEntry{
 			uint64_t val;
 			int add;
 		}mmio_entry;
+		struct{
+			target_ulong gva;
+		}print_entry;
 	};
 };
 

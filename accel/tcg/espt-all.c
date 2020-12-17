@@ -59,10 +59,15 @@ int espt_entry_flush_all(void)
 	struct ESPTFlushEntryVec * entry = &espt_state.espt_entry;
 	int r = -1;	
 
+	for(int i=0;i<entry->size;i++){
+		qemu_log("flush addr: " TARGET_FMT_lx "\n", (entry->addr_list)[i]);
+	}
+
 	espt_entry.flush_entry.list = entry->addr_list;
 	espt_entry.flush_entry.size = entry->size;
 	
 	r = espt_ioctl(ESPT_FLUSH_ENTRY, &espt_entry);
+	qemu_log("ESPT_FLUSH_ENTRY: %u\n", ESPT_FLUSH_ENTRY);
 	if(r)
 		goto out;
 	r = 0;
@@ -102,14 +107,9 @@ static void espt_remove_slot(ESPTMemorySlot *mem)
 
 static void espt_insert_slot(ESPTMemorySlot *mem)
 {
+	//qemu_log("espt_insert_slot\n");
 	ESPTState *s = &espt_state;
-	ESPTMemorySlot *var, *next_var;
-	QLIST_FOREACH_SAFE(var, &s->memory_slot, link, next_var){
-		if (var->guest_phys_addr >= mem->guest_phys_addr + mem->memory_size) {
-            QLIST_INSERT_AFTER(var, mem, link);
-			return;
-        }
-	}
+	QLIST_INSERT_HEAD(&s->memory_slot, mem, link);
 }
 
 bool espt_find_gpa_in_slot(hwaddr gpa)
@@ -118,6 +118,7 @@ bool espt_find_gpa_in_slot(hwaddr gpa)
 	ESPTMemorySlot *var, *next_var;
 	QLIST_FOREACH_SAFE(var, &s->memory_slot, link, next_var){
 		if (var->guest_phys_addr <= gpa && gpa < var->guest_phys_addr + var->memory_size) {
+			//qemu_log("gpa\n");
             return true;
         }
 	}
@@ -126,12 +127,12 @@ bool espt_find_gpa_in_slot(hwaddr gpa)
 
 void espt_print_all_slot(void)
 {
-	qemu_log("espt_print_all_slot!\n");
+	/*qemu_log("espt_print_all_slot!\n");
 	ESPTState *s = &espt_state;
 	ESPTMemorySlot *var, *next_var;
 	QLIST_FOREACH_SAFE(var, &s->memory_slot, link, next_var){
 		qemu_log("guest_phys_addr: %lx, memory_size: %lx\n", var->guest_phys_addr, var->memory_size);
-	}
+	}*/
 }
 
 static ESPTMemorySlot *espt_lookup_matching_slot(hwaddr start_addr,
@@ -179,6 +180,8 @@ static int espt_set_user_memory_slot(ESPTMemorySlot *mem, bool new){
 	if (mem->guest_phys_addr + mem->memory_size < mem->guest_phys_addr)
 		goto out;
 
+	//qemu_log("espt_set_user_memory_slot\n");
+
 	r = 0;
 	if(!new){
 		espt_remove_slot(mem);
@@ -192,8 +195,8 @@ out:
 
 static void espt_set_phys_mem(MemoryRegionSection *section, bool add)
 {
-	qemu_log("espt_set_phys_mem, add: %d\n", add);
-	qemu_log("MemoryRegion, name: %s, ram: %d, ram_device: %d, romd_mode:%d, readonly :%d\n", section->mr->name, section->mr->ram_device, section->mr->romd_mode, section->mr->readonly);
+	//qemu_log("espt_set_phys_mem, add: %d\n", add);
+	//qemu_log("MemoryRegion, name: %s, ram: %d, ram_device: %d, romd_mode:%d, readonly :%d\n", section->mr->name, section->mr->ram, section->mr->ram_device, section->mr->romd_mode, section->mr->readonly);
 	
     ESPTMemorySlot *mem;
     int err;
@@ -202,7 +205,7 @@ static void espt_set_phys_mem(MemoryRegionSection *section, bool add)
     void *ram;
 	
     if (!memory_region_is_ram(mr)) {
-		qemu_log("not ram!\n");
+		//qemu_log("not ram!\n");
 		return;
     }
 
@@ -214,9 +217,9 @@ static void espt_set_phys_mem(MemoryRegionSection *section, bool add)
     /* use aligned delta to align the ram address */
     ram = memory_region_get_ram_ptr(mr) + section->offset_within_region +
           (start_addr - section->offset_within_address_space);
-	qemu_log("start_addr: %lx, size: %lx, ram: %lx\n", start_addr, size, (unsigned long)ram);
+	//qemu_log("start_addr: %lx, size: %lx, ram: %lx\n", start_addr, size, (unsigned long)ram);
 	if(espt_check_overlap(start_addr, size)){
-		qemu_log("mem slot overlap!\n");
+		//qemu_log("mem slot overlap!\n");
 	}
 
     //kvm_slots_lock(kml);
@@ -256,7 +259,7 @@ static void espt_region_add(MemoryListener *listener,
 {
     memory_region_ref(section->mr);
     espt_set_phys_mem(section, true);
-	qemu_log("espt_region_add!\n");
+	//qemu_log("espt_region_add!\n");
 }
 
 static void espt_region_del(MemoryListener *listener,
@@ -264,14 +267,14 @@ static void espt_region_del(MemoryListener *listener,
 {
     espt_set_phys_mem(section, false);
     memory_region_unref(section->mr);
-	qemu_log("espt_region_del!\n");
+	//qemu_log("espt_region_del!\n");
 }
 
 static void espt_commit(MemoryListener *listener)
 {
-	qemu_log("espt_commit!\n");
-	if(espt_entry_flush_all())
-		qemu_log("flush_all OK!\n");
+	//qemu_log("espt_commit!\n");
+	//if(!espt_entry_flush_all())
+		//qemu_log("flush_all OK!\n");
 }
 
 static void espt_memory_listener_register(AddressSpace *as)
@@ -316,6 +319,8 @@ int espt_init(void)
         goto err;
     }
 	espt_memory_listener_register(&address_space_memory);
+
+	//qemu_log("sizeof target_ulong! :%d, uint64_t: %d\n", sizeof(target_ulong), sizeof(uint64_t));
 
 	if(espt_ioctl(ESPT_INIT, &s->pid)){
 		ret = -errno;

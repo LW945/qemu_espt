@@ -46,7 +46,7 @@ static void get_iotlb_hva(CPUState *cpu, target_ulong vaddr,
          */
     }
 	*my_iotlb = iotlb;
-	*my_addend = addend;
+	*my_addend = addend - (vaddr & TARGET_PAGE_MASK);
 	
 }
 

@@ -228,6 +228,10 @@ static inline void tlb_table_flush_by_mmuidx(CPUArchState *env, int mmu_idx)
     tlb_mmu_resize_locked(env, mmu_idx);
     memset(env_tlb(env)->f[mmu_idx].table, -1, sizeof_tlb(env, mmu_idx));
     env_tlb(env)->d[mmu_idx].n_used_entries = 0;
+	if(!espt_entry_flush_all())
+		qemu_log("flush_all OK!\n");
+    else
+        qemu_log("flush_all Failed!\n");
 }
 
 static inline void tlb_n_used_entries_inc(CPUArchState *env, uintptr_t mmu_idx)
@@ -296,6 +300,10 @@ static void tlb_flush_one_mmuidx_locked(CPUArchState *env, int mmu_idx)
     env_tlb(env)->d[mmu_idx].vindex = 0;
     memset(env_tlb(env)->d[mmu_idx].vtable, -1,
            sizeof(env_tlb(env)->d[0].vtable));
+	if(!espt_entry_flush_all())
+		qemu_log("flush_all OK!\n");
+    else
+        qemu_log("flush_all Failed!\n");
 }
 
 static void tlb_flush_by_mmuidx_async_work(CPUState *cpu, run_on_cpu_data data)
@@ -1400,7 +1408,7 @@ load_memop(const void *haddr, MemOp op)
 }
 
 struct HelperElem helper_elem;
-bool has_mmio;
+static bool has_mmio;
 
 static void sigsegv_handler(int sig){
 	CPUArchState *env = helper_elem.env;
@@ -1413,7 +1421,6 @@ static void sigsegv_handler(int sig){
 	bool is_load = helper_elem.is_load;
 
 	espt_print_all_slot();
-	qemu_log("sigsegv_handler addr: " TARGET_FMT_lx "\n", vaddr);
 
 	uintptr_t mmu_idx = get_mmuidx(oi);
 	MMUAccessType access_type =
@@ -1433,10 +1440,18 @@ static void sigsegv_handler(int sig){
 	assert(handle_espt_page_fault(env_cpu(env), vaddr, size,
 		access_type, mmu_idx, retaddr, &paddr, &iotlb, &addend));				//gva to gpa
 		
+    tlb_fill(env_cpu(env), vaddr, size, access_type, mmu_idx, retaddr);
+    uintptr_t index = tlb_index(env, mmu_idx, vaddr);
+    CPUTLBEntry *entry = tlb_entry(env, mmu_idx, vaddr);
+    qemu_log("cputlb hvaddr: %llx\n", (uintptr_t)vaddr + entry->addend);
+
 	iotlbentry.addr = iotlb - (vaddr & TARGET_PAGE_MASK);
 	iotlbentry.attrs = cpu_get_mem_attrs(env);
 	
+    qemu_log("sigsegv_handler addr: " TARGET_FMT_lx ", paddr:" TARGET_FMT_lx "\n", vaddr, paddr);
+
 	if(!espt_find_gpa_in_slot(paddr)){	//try to find gpa in tcg_memory_region //MMIO
+        qemu_log("mmio\n");
 		uint64_t read_val = 0;
 		if(is_load)
 			read_val = io_readx(env, &iotlbentry, mmu_idx, vaddr, retaddr, access_type, op);//todo
@@ -1450,6 +1465,8 @@ static void sigsegv_handler(int sig){
 	}		
 	else{
 		hva = (uintptr_t)vaddr + addend;
+        qemu_log("hvaddr: %llx\n", hva);
+		qemu_log("ESPT_SET_ENTRY: %u\n", ESPT_SET_ENTRY);
 		espt_entry.set_entry.gva = vaddr;
 		espt_entry.set_entry.hva = hva;
 		if(!espt_ioctl(ESPT_SET_ENTRY, &espt_entry))
@@ -1491,27 +1508,32 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
             uintptr_t retaddr, MemOp op, bool code_read,
             FullLoadHelper *full_load)
 {
-	qemu_log("load_helper addr: " TARGET_FMT_lx "\n", addr);
+	
     uintptr_t mmu_idx = get_mmuidx(oi);
     const MMUAccessType access_type =
         code_read ? MMU_INST_FETCH : MMU_DATA_LOAD;
     unsigned a_bits = get_alignment_bits(get_memop(oi));
 	size_t size = memop_size(op);
     uint64_t res;
+	struct ESPTEntry espt_entry;
+    //qemu_log("load_helper addr: " TARGET_FMT_lx ", asidx: %d\n", addr, cpu_asidx_from_attrs(env_cpu(env), cpu_get_mem_attrs(env))); 
+    qemu_log("load_helper addr: " TARGET_FMT_lx "\n", addr);
 
 	set_helper_elem(env, addr, 0, oi, retaddr, op, code_read, 1);
 	signal(SIGSEGV, &sigsegv_handler);
 
+    //qemu_log("load_helper addr1: " TARGET_FMT_lx "\n", addr);
     /* Handle CPU specific unaligned behaviour */
     if (addr & ((1 << a_bits) - 1)) {
+        qemu_log("cpu_unaligned_access: " TARGET_FMT_lx "\n", addr);
         cpu_unaligned_access(env_cpu(env), addr, access_type,
                              mmu_idx, retaddr);
     }
-
+    //qemu_log("load_helper addr2: " TARGET_FMT_lx "\n", addr);
     if ((addr & (size - 1)) != 0) {
         goto do_unaligned_access;
 	}
-
+    //qemu_log("load_helper addr3: " TARGET_FMT_lx "\n", addr);
     /* Handle slow unaligned access (it spans two pages or IO).  */
     if (size > 1
         && unlikely((addr & ~TARGET_PAGE_MASK) + size - 1
@@ -1522,10 +1544,10 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
     do_unaligned_access:
         addr1 = addr & ~((target_ulong)size - 1);
         addr2 = addr1 + size;
+        qemu_log("do_unaligned_access: " TARGET_FMT_lx "\n", addr);
         r1 = full_load(env, addr1, oi, retaddr);
         r2 = full_load(env, addr2, oi, retaddr);
         shift = (addr & (size - 1)) * 8;
-
         if (memop_big_endian(op)) {
             /* Big-endian combine.  */
             res = (r1 << shift) | (r2 >> ((size * 8) - shift));
@@ -1536,9 +1558,16 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         return res & MAKE_64BIT_MASK(0, size * 8);
     }
 
-    res = load_memop((void *)addr, op);
+	espt_entry.print_entry.gva = addr;
+	if(addr == 0xfcfce){
+		for(int i=0;i<0xff;i++){
+			espt_entry.print_entry.gva = 0xfcf00+i;
+			espt_ioctl(ESPT_PRINT_ENTRY, &espt_entry);
+		}
+	}
+	res = load_memop((void *)addr, op);
+	//qemu_log("load value: %lld, op: %d\n", res, op);
 	espt_mmio_redo(addr);
-		
 	return res;
 }
 
@@ -1733,6 +1762,7 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
          * This loop must go in the forward direction to avoid issues
          * with self-modifying code in Windows 64-bit.
          */
+		qemu_log("do_unaligned_access: " TARGET_FMT_lx "\n", addr);
         for (i = 0; i < size; ++i) {
             uint8_t val8;
             if (memop_big_endian(op)) {
