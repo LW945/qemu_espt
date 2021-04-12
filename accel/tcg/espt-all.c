@@ -127,12 +127,12 @@ bool espt_find_gpa_in_slot(hwaddr gpa)
 
 void espt_print_all_slot(void)
 {
-	/*qemu_log("espt_print_all_slot!\n");
+	qemu_log("espt_print_all_slot!\n");
 	ESPTState *s = &espt_state;
 	ESPTMemorySlot *var, *next_var;
 	QLIST_FOREACH_SAFE(var, &s->memory_slot, link, next_var){
 		qemu_log("guest_phys_addr: %lx, memory_size: %lx\n", var->guest_phys_addr, var->memory_size);
-	}*/
+	}
 }
 
 static ESPTMemorySlot *espt_lookup_matching_slot(hwaddr start_addr,
@@ -195,8 +195,8 @@ out:
 
 static void espt_set_phys_mem(MemoryRegionSection *section, bool add)
 {
-	//qemu_log("espt_set_phys_mem, add: %d\n", add);
-	//qemu_log("MemoryRegion, name: %s, ram: %d, ram_device: %d, romd_mode:%d, readonly :%d\n", section->mr->name, section->mr->ram, section->mr->ram_device, section->mr->romd_mode, section->mr->readonly);
+	qemu_log("espt_set_phys_mem, add: %d\n", add);
+	qemu_log("MemoryRegion, name: %s, ram: %d, ram_device: %d, romd_mode:%d, readonly :%d\n", section->mr->name, section->mr->ram, section->mr->ram_device, section->mr->romd_mode, section->mr->readonly);
 	
     ESPTMemorySlot *mem;
     int err;
@@ -217,7 +217,7 @@ static void espt_set_phys_mem(MemoryRegionSection *section, bool add)
     /* use aligned delta to align the ram address */
     ram = memory_region_get_ram_ptr(mr) + section->offset_within_region +
           (start_addr - section->offset_within_address_space);
-	//qemu_log("start_addr: %lx, size: %lx, ram: %lx\n", start_addr, size, (unsigned long)ram);
+	qemu_log("start_addr: %lx, size: %lx, ram: %lx\n", start_addr, size, (unsigned long)ram);
 	if(espt_check_overlap(start_addr, size)){
 		//qemu_log("mem slot overlap!\n");
 	}
@@ -272,9 +272,9 @@ static void espt_region_del(MemoryListener *listener,
 
 static void espt_commit(MemoryListener *listener)
 {
-	//qemu_log("espt_commit!\n");
-	//if(!espt_entry_flush_all())
-		//qemu_log("flush_all OK!\n");
+	qemu_log("espt_commit!\n");
+	if(!espt_entry_flush_all())
+		qemu_log("flush_all OK!\n");
 }
 
 static void espt_memory_listener_register(AddressSpace *as)

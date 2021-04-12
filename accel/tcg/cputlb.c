@@ -1555,18 +1555,11 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
             /* Little-endian combine.  */
             res = (r1 >> shift) | (r2 << ((size * 8) - shift));
         }
+		qemu_log("do_unaligned_access load value: %lld\n", res & MAKE_64BIT_MASK(0, size * 8));
         return res & MAKE_64BIT_MASK(0, size * 8);
     }
-
-	espt_entry.print_entry.gva = addr;
-	if(addr == 0xfcfce){
-		for(int i=0;i<0xff;i++){
-			espt_entry.print_entry.gva = 0xfcf00+i;
-			espt_ioctl(ESPT_PRINT_ENTRY, &espt_entry);
-		}
-	}
 	res = load_memop((void *)addr, op);
-	//qemu_log("load value: %lld, op: %d\n", res, op);
+	qemu_log("load value: %lld\n", res);
 	espt_mmio_redo(addr);
 	return res;
 }
@@ -1737,11 +1730,10 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
     uintptr_t mmu_idx = get_mmuidx(oi);
     unsigned a_bits = get_alignment_bits(get_memop(oi));
     size_t size = memop_size(op);
-
+	struct ESPTEntry espt_entry;
 	set_helper_elem(env, addr, val, oi, retaddr, op, 0, 0);
 	signal(SIGSEGV, &sigsegv_handler);
-
-    /* Handle CPU specific unaligned behaviour */
+	/* Handle CPU specific unaligned behaviour */
     if (addr & ((1 << a_bits) - 1)) {
         cpu_unaligned_access(env_cpu(env), addr, MMU_DATA_STORE,
                              mmu_idx, retaddr);
@@ -1778,6 +1770,7 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
     }
 
     store_memop((void *)addr, val, op);
+
 	espt_mmio_redo(addr);
 }
 

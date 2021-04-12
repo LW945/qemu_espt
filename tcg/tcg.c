@@ -4139,17 +4139,21 @@ int tcg_gen_code(TCGContext *s, TranslationBlock *tb)
         case INDEX_op_mov_i32:
         case INDEX_op_mov_i64:
         case INDEX_op_mov_vec:
+			qemu_log("mov opc: %d\n", opc);
             tcg_reg_alloc_mov(s, op);
             break;
         case INDEX_op_movi_i32:
         case INDEX_op_movi_i64:
         case INDEX_op_dupi_vec:
+			qemu_log("movi opc: %d\n", opc);
             tcg_reg_alloc_movi(s, op);
             break;
         case INDEX_op_dup_vec:
+			qemu_log("dup opc: %d\n", opc);
             tcg_reg_alloc_dup(s, op);
             break;
         case INDEX_op_insn_start:
+			qemu_log("insn_start opc: %d\n", opc);
             if (num_insns >= 0) {
                 size_t off = tcg_current_code_size(s);
                 s->gen_insn_end_off[num_insns] = off;
@@ -4168,16 +4172,20 @@ int tcg_gen_code(TCGContext *s, TranslationBlock *tb)
             }
             break;
         case INDEX_op_discard:
+			qemu_log("discard opc: %d\n", opc);
             temp_dead(s, arg_temp(op->args[0]));
             break;
         case INDEX_op_set_label:
+			qemu_log("set_label opc: %d\n", opc);
             tcg_reg_alloc_bb_end(s, s->reserved_regs);
             tcg_out_label(s, arg_label(op->args[0]), s->code_ptr);
             break;
         case INDEX_op_call:
+			qemu_log("call opc: %d\n", opc);
             tcg_reg_alloc_call(s, op);
             break;
         default:
+			qemu_log("default opc: %d\n", opc);
             /* Sanity check that we've not introduced any unhandled opcodes. */
             tcg_debug_assert(tcg_op_supported(opc));
             /* Note: in order to speed up the code, it would be much

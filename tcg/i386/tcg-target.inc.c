@@ -179,6 +179,7 @@ static bool patch_reloc(tcg_insn_unit *code_ptr, int type,
         }
         /* FALLTHRU */
     case R_386_32:
+		qemu_log("value: %llx\n", value);
         tcg_patch32(code_ptr, value);
         break;
     case R_386_PC8:
@@ -1617,6 +1618,7 @@ static void tcg_out_branch(TCGContext *s, int call, tcg_insn_unit *dest)
         tcg_out_opc(s, OPC_GRP5, 0, 0, 0);
         tcg_out8(s, (call ? EXT5_CALLN_Ev : EXT5_JMPN_Ev) << 3 | 5);
         new_pool_label(s, (uintptr_t)dest, R_386_PC32, s->code_ptr, -4);
+		qemu_log("sss\n");
         tcg_out32(s, 0);
     }
 }
@@ -1846,7 +1848,7 @@ static bool tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
         tcg_out_movi(s, TCG_TYPE_PTR, tcg_target_call_iarg_regs[3],
                      (uintptr_t)l->raddr);
     }
-
+	qemu_log("tcg_out_qemu_ld_slow_path! %llx\n", qemu_ld_helpers[opc & (MO_BSWAP | MO_SIZE)]);
     tcg_out_call(s, qemu_ld_helpers[opc & (MO_BSWAP | MO_SIZE)]);
 
     data_reg = l->datalo_reg;
@@ -1954,6 +1956,7 @@ static bool tcg_out_qemu_st_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
 
     /* "Tail call" to the helper, with the return address back inline.  */
     tcg_out_push(s, retaddr);
+	qemu_log("tcg_out_qemu_st_slow_path! %llx\n", qemu_st_helpers[opc & (MO_BSWAP | MO_SIZE)]);
     tcg_out_jmp(s, qemu_st_helpers[opc & (MO_BSWAP | MO_SIZE)]);
     return true;
 }

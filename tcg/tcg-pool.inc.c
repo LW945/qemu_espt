@@ -70,7 +70,8 @@ static inline void new_pool_label(TCGContext *s, tcg_target_ulong d, int rtype,
 {
     TCGLabelPoolData *n = new_pool_alloc(s, 1, rtype, label, addend);
     n->data[0] = d;
-    new_pool_insert(s, n);
+	qemu_log("new_pool_label: %lx\n", (intptr_t)(n->data));    
+	new_pool_insert(s, n);
 }
 
 /* For v64 or v128, depending on the host.  */

@@ -47,6 +47,7 @@ static int tcg_out_ldst_finalize(TCGContext *s)
 
     /* qemu_ld/st slow paths */
     QSIMPLEQ_FOREACH(lb, &s->ldst_labels, next) {
+		qemu_log("tcg_out_ldst_finalize\n");
         if (lb->is_ld
             ? !tcg_out_qemu_ld_slow_path(s, lb)
             : !tcg_out_qemu_st_slow_path(s, lb)) {
